@@ -27,7 +27,14 @@ python -m pytest tests -q
   «маршрут 5 = 0». Оба выше 0.88.
 
 Данные хакатона для сборки лежат и в `service/data/labels/` — это та же пара файлов,
-её можно передать через `--data service/data`.
+её можно передать через `--data service/data`. Внешние источники при этом берутся
+из `data/external/` репозитория (в `service/data/` каталога `external` нет).
+
+Проверено: `--require-clean --data service/data` из коммита `3d48343` на pandas 3.0.6 /
+numpy 2.5.3 / duckdb 1.5.5 даёт прогноз с md5 `96b297e84e18ae66410fc6831aaa2f6b` —
+ровно тот, что получил 0.88987; `score` в `release_metadata` заполнен.
+`requirements-ml.txt` задаёт только нижние границы версий — при расхождении md5
+`score` останется `NULL`, это и есть проверка.
 
 ## Структура
 | Папка | Что внутри |
