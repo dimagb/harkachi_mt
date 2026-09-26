@@ -18,6 +18,12 @@ NETWORK_EVENTS_PATH = Path(
     os.getenv("NETWORK_EVENTS_FILE", DATA_DIR / "network_events.json")
 )
 
+# Приём потоковых валидаций: почасовые агрегаты и обработанные batch_id.
+# Тоже состояние сервиса, а не входные данные.
+VALIDATIONS_PATH = Path(
+    os.getenv("VALIDATIONS_FILE", DATA_DIR / "validations_state.json")
+)
+
 # Каталог со статикой собранного фронтенда
 STATIC_DIR = Path(os.getenv("STATIC_DIR", BASE_DIR / "static"))
 

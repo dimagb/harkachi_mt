@@ -20,14 +20,18 @@ import logging
 import time
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from app import config
 from app.api import export, factors, forecast, health, network, reference
+from app.api import validations as validations_api
 from app.api.deps import ApiError
 from app.pipeline import geo as geo_module
 from app.pipeline import network_events
+from app.pipeline import validations
 from app.pipeline.cache import cache as response_cache
 from app.pipeline.ingest import get_dataset
 
@@ -76,6 +80,23 @@ async def timing_and_cache(request: Request, call_next):
     """
     started = time.perf_counter()
     path = request.url.path
+
+    # Слишком большой батч отклоняется по заголовку, до чтения и разбора
+    # тела — иначе сервис сначала честно загрузил бы в память всё присланное.
+    if request.method == "POST" and path in validations_api.INGEST_PATHS:
+        length = request.headers.get("content-length", "")
+        if length.isdigit() and int(length) > validations.MAX_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "code": "BATCH_TOO_LARGE",
+                    "message": (
+                        f"Тело батча {int(length)} байт, максимум "
+                        f"{validations.MAX_BODY_BYTES}. Разбейте поток на батчи поменьше"
+                    ),
+                },
+            )
+
     cacheable = request.method == "GET" and path.startswith(CACHEABLE_PREFIXES)
 
     if cacheable:
@@ -132,6 +153,23 @@ async def api_error_handler(request: Request, exc: ApiError):
     )
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    """Битый JSON или пустое тело на приёме — 422 INVALID_BATCH в формате
+    контракта. На остальных путях формат ошибок FastAPI не меняется."""
+    if request.url.path in validations_api.INGEST_PATHS:
+        first = exc.errors()[0] if exc.errors() else {}
+        reason = first.get("msg", "тело запроса не разобрано")
+        return JSONResponse(
+            status_code=422,
+            content={
+                "code": "INVALID_BATCH",
+                "message": f"Тело запроса должно быть JSON-объектом с batch_id и records: {reason}",
+            },
+        )
+    return await request_validation_exception_handler(request, exc)
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Понятное сообщение вместо стектрейса — требование надёжности из ТЗ."""
@@ -152,6 +190,9 @@ app.include_router(forecast.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(factors.router, prefix="/api")
 app.include_router(network.router, prefix="/api")
+app.include_router(validations_api.router, prefix="/api")
+# Алиас по разделу 36 контракта: те же обработчики, в документации один раз.
+app.include_router(validations_api.router, prefix="/api/v1", include_in_schema=False)
 
 
 @app.on_event("startup")
@@ -161,6 +202,7 @@ def warm_up() -> None:
     dataset = get_dataset()
     geo = geo_module.get_geo()
     network_events.get_repository()
+    validations.get_repository()
     elapsed = time.perf_counter() - started
     log.info(
         "Готов за %.2f с: прогноз %d строк, история %d строк, "
@@ -201,6 +243,9 @@ def api_root() -> dict:
             "GET  /api/network-events",
             "POST /api/network-events",
             "DELETE /api/network-events/{id}",
+            "POST /api/ingest/validations  (алиас /api/v1/ingest/validations)",
+            "GET  /api/ingest/aggregates?routes=&date_from=&date_to=&granularity=day|hour",
+            "GET  /api/ingest/status",
         ],
     }
 

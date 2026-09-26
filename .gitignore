@@ -7,6 +7,9 @@ initial_data/
 # добавленное на демо, у жюри обнулило бы маршрут.
 service/data/network_events.json
 service/data/network_events.json.tmp
+# Состояние приёма валидаций (агрегаты и batch_id) — тоже состояние демо.
+service/data/validations_state.json
+service/data/validations_state.json.tmp
 service/static/
 report.txt
 .venv/
