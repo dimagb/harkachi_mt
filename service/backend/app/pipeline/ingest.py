@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import logging
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -72,6 +73,64 @@ def _column_map(columns) -> dict:
 
 
 @dataclass
+class RowIndex:
+    """Строки прогноза или истории с предрасчитанными ключами и индексом
+    (маршрут, дата) → позиции строк.
+
+    Запрос выбирает только нужные маршруты и даты, а не перебирает всё.
+    Позиции возвращаются в исходном порядке строк, поэтому суммы
+    складываются в той же последовательности, что и при полном переборе:
+    сложение float неассоциативно, и другой порядок мог бы сдвинуть
+    последний знак.
+    """
+
+    # (route, day, hour, value, ключ часа, ключ дня, ключ месяца)
+    rows: list = field(default_factory=list)
+    by_route_day: dict = field(default_factory=dict)
+    dates: list = field(default_factory=list)
+    routes: list = field(default_factory=list)
+
+    KEY_POSITION = {"hour": 4, "day": 5, "month": 6}
+
+    @classmethod
+    def build(cls, store: dict) -> "RowIndex":
+        rows = []
+        by_route_day: dict = defaultdict(list)
+        iso_cache: dict = {}
+        for pos, ((route, day, hour), value) in enumerate(store.items()):
+            iso = iso_cache.get(day)
+            if iso is None:
+                iso = iso_cache[day] = day.isoformat()
+            rows.append((route, day, hour, value, f"{iso}T{hour:02d}", iso, iso[:7]))
+            by_route_day[(route, day)].append(pos)
+        return cls(
+            rows=rows,
+            by_route_day=dict(by_route_day),
+            dates=sorted({day for _, day in by_route_day}),
+            routes=sorted({route for route, _ in by_route_day}),
+        )
+
+    def positions(self, routes=None, start: date | None = None,
+                  end: date | None = None) -> list:
+        """Позиции строк по маршрутам и диапазону дат включительно."""
+        lo = bisect_left(self.dates, start) if start is not None else 0
+        hi = bisect_right(self.dates, end) if end is not None else len(self.dates)
+        days = self.dates[lo:hi]
+        wanted = sorted(set(routes)) if routes else self.routes
+        get = self.by_route_day.get
+        result: list = []
+        for route in wanted:
+            for day in days:
+                found = get((route, day))
+                if found:
+                    result.extend(found)
+        # Строки обычно уже упорядочены по маршруту и дате, тогда сортировка
+        # линейная; в любом случае восстанавливает исходный порядок.
+        result.sort()
+        return result
+
+
+@dataclass
 class Dataset:
     """Нормализованные данные в памяти."""
 
@@ -86,8 +145,13 @@ class Dataset:
     # --- производные срезы, считаются один раз на старте
     forecast_by_route_date: dict = field(default_factory=dict)
     history_by_route_date: dict = field(default_factory=dict)
+    forecast_index: RowIndex = field(default_factory=RowIndex)
+    history_index: RowIndex = field(default_factory=RowIndex)
 
     def build_indexes(self) -> None:
+        self.forecast_index = RowIndex.build(self.forecast)
+        self.history_index = RowIndex.build(self.history)
+
         by_rd = defaultdict(float)
         for (route, day, _hour), value in self.forecast.items():
             by_rd[(route, day)] += value

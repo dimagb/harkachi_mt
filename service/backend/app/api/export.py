@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import adjustment_params, parse_date_param, parse_routes_param
 from app.pipeline.adjust import Adjustment
-from app.pipeline.aggregate import operational_value
+from app.pipeline.aggregate import iter_rows
 from app.pipeline.ingest import get_dataset
 from app.pipeline.network_events import get_repository as network_repository
 
@@ -23,19 +23,18 @@ HEADER = ["route", "date", "hour", "prediction"]
 def _collect(routes, date_from, date_to, hour_from, hour_to, adjustment,
              network=None):
     dataset = get_dataset()
-    wanted = set(routes) if routes else None
     rows = []
-    for (route, day, hour), value in dataset.forecast.items():
-        if wanted is not None and route not in wanted:
-            continue
-        if date_from and day < date_from:
-            continue
-        if date_to and day > date_to:
-            continue
-        if hour < hour_from or hour > hour_to:
-            continue
-        value = operational_value(route, day, hour, value, adjustment, network)
-        rows.append((route, day.isoformat(), hour, round(value)))
+    for row, value in iter_rows(
+        dataset.forecast_index,
+        routes=routes,
+        start=date_from,
+        end=date_to,
+        hour_from=hour_from,
+        hour_to=hour_to,
+        adjustment=adjustment,
+        network=network,
+    ):
+        rows.append((row[0], row[5], row[2], round(value)))
     rows.sort(key=lambda item: (item[0], item[1], item[2]))
     return rows
 

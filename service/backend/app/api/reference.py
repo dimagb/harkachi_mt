@@ -25,15 +25,34 @@ def routes() -> dict:
                 "stops_count": len(geo.stops(route)),
                 "excluded": route in config.EXCLUDED_ROUTES,
                 "starts_at": config.ROUTE_START_DATES.get(route),
-                "note": (
-                    f"Маршрут запущен {config.ROUTE_START_DATES[route]}: "
-                    "истории нет, до этой даты прогноз нулевой"
-                    if route in config.ROUTE_START_DATES
-                    else None
-                ),
+                "note": _start_note(route, dataset),
             }
         )
     return {"routes": items, "total": len(items)}
+
+
+def _start_note(route: int, dataset) -> str | None:
+    """Пояснение для маршрута с датой запуска — по фактическому прогнозу.
+
+    Текст строится по данным, а не зашит: в сданном релизе маршрут 5
+    нулевой весь период, а в варианте с cold start ненулевой с даты
+    запуска. Так пояснение не противоречит графику ни в одном релизе.
+    """
+    start = config.ROUTE_START_DATES.get(route)
+    if start is None:
+        return None
+    total = sum(
+        value
+        for (r, _day), value in dataset.forecast_by_route_date.items()
+        if r == route
+    )
+    if total == 0:
+        return (
+            f"Маршрут запущен {start}, истории нет. В текущем релизе прогноз "
+            "по нему нулевой на весь период: вариант с прогнозом от "
+            "маршрута-аналога измерен, но в релиз не взят"
+        )
+    return f"Маршрут запущен {start}: истории нет, до этой даты прогноз нулевой"
 
 
 @router.get("/stops", summary="Остановки маршрута с координатами")

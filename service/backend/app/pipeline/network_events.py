@@ -120,6 +120,12 @@ class NetworkEffect:
         for event in self.events:
             by_route.setdefault(event.route, []).append(event)
         self._by_route = by_route
+        # Маршруты с событиями: остальные hot path пропускает без вызова apply.
+        self.routes = frozenset(by_route)
+        # (маршрут, день) → события, покрывающие этот день, в исходном
+        # порядке. Заполняется лениво; снимок неизменяемый, поэтому гонка
+        # двух запросов безвредна — оба запишут одно и то же.
+        self._by_route_day: dict = {}
 
     @property
     def is_empty(self) -> bool:
@@ -129,9 +135,13 @@ class NetworkEffect:
         events = self._by_route.get(route)
         if not events:
             return value
+        todays = self._by_route_day.get((route, day))
+        if todays is None:
+            todays = tuple(e for e in events if e.covers_day(day))
+            self._by_route_day[(route, day)] = todays
         product = 1.0
-        for event in events:
-            if not (event.covers_day(day) and event.covers_hour(hour)):
+        for event in todays:
+            if not event.covers_hour(hour):
                 continue
             if event.type == FULL_CLOSURE:
                 return 0.0

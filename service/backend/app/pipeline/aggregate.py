@@ -18,7 +18,7 @@ from datetime import date, timedelta
 from app import config
 from app.pipeline import geo as geo_module
 from app.pipeline.adjust import Adjustment
-from app.pipeline.ingest import Dataset
+from app.pipeline.ingest import Dataset, RowIndex
 from app.pipeline.network_events import NetworkEffect
 
 GRANULARITIES = ("hour", "day", "month")
@@ -31,38 +31,48 @@ def _daterange(start: date, end: date):
         day += timedelta(days=1)
 
 
-def _bucket_key(day: date, hour: int, granularity: str) -> str:
-    if granularity == "hour":
-        return f"{day.isoformat()}T{hour:02d}"
-    if granularity == "day":
-        return day.isoformat()
-    return f"{day.year}-{day.month:02d}"
-
-
 def _bucket_label(key: str, granularity: str) -> str:
     if granularity == "hour":
         return key.replace("T", " ") + ":00"
     return key
 
 
-def operational_value(
-    route: int,
-    day: date,
-    hour: int,
-    value: float,
-    adjustment: Adjustment | None,
-    network: NetworkEffect | None,
-) -> float:
-    """База → поправки пользователя → события сети.
+def iter_rows(
+    index: RowIndex,
+    *,
+    routes=None,
+    start: date | None = None,
+    end: date | None = None,
+    hour_from: int | None = None,
+    hour_to: int | None = None,
+    adjustment: Adjustment | None = None,
+    network: NetworkEffect | None = None,
+):
+    """Строки среза с пересчитанным значением: (строка индекса, значение).
 
+    Часы None — фильтра по часам нет вовсе (как в сводке по маршрутам).
+
+    Порядок пересчёта: база → поправки пользователя → события сети.
     События последними: закрытие обнуляет результат независимо от любых
-    коэффициентов (раздел 26 контракта).
+    коэффициентов (раздел 26 контракта). Поправки считаются, только если
+    они заданы, события — только для маршрутов, у которых они есть.
+    Порядок строк исходный.
     """
-    if adjustment is not None and not adjustment.is_identity:
-        value = value * adjustment.factor(route, day)
-    if network is not None and not network.is_empty:
-        value = network.apply(route, day, hour, value)
-    return value
+    adjust = adjustment is not None and not adjustment.is_identity
+    event_routes = network.routes if network is not None else ()
+    check_hours = hour_from is not None
+    rows = index.rows
+    for pos in index.positions(routes, start, end):
+        row = rows[pos]
+        hour = row[2]
+        if check_hours and (hour < hour_from or hour > hour_to):
+            continue
+        value = row[3]
+        if adjust:
+            value = value * adjustment.factor(row[0], row[1])
+        if row[0] in event_routes:
+            value = network.apply(row[0], row[1], hour, value)
+        yield row, value
 
 
 def series(
@@ -87,7 +97,7 @@ def series(
     if source != "forecast":
         network = None
 
-    store = dataset.forecast if source == "forecast" else dataset.history
+    index = dataset.forecast_index if source == "forecast" else dataset.history_index
     available = dataset.forecast_dates if source == "forecast" else dataset.history_dates
     if not available:
         return {
@@ -108,15 +118,19 @@ def series(
     peak = None
     rows = 0
 
-    for (route, day, hour), value in store.items():
-        if wanted_routes is not None and route not in wanted_routes:
-            continue
-        if day < start or day > end:
-            continue
-        if hour < hour_from or hour > hour_to:
-            continue
-        value = operational_value(route, day, hour, value, adjustment, network)
-        key = _bucket_key(day, hour, granularity)
+    key_position = RowIndex.KEY_POSITION[granularity]
+    for row, value in iter_rows(
+        index,
+        routes=wanted_routes,
+        start=start,
+        end=end,
+        hour_from=hour_from,
+        hour_to=hour_to,
+        adjustment=adjustment,
+        network=network,
+    ):
+        route, day, hour = row[0], row[1], row[2]
+        key = row[key_position]
         totals[key] += value
         if split_by_route:
             per_route[route][key] += value
@@ -187,10 +201,14 @@ def route_totals(
 
     totals: dict = defaultdict(float)
     peaks: dict = {}
-    for (route, day, hour), value in dataset.forecast.items():
-        if day < start or day > end:
-            continue
-        value = operational_value(route, day, hour, value, adjustment, network)
+    for row, value in iter_rows(
+        dataset.forecast_index,
+        start=start,
+        end=end,
+        adjustment=adjustment,
+        network=network,
+    ):
+        route, day, hour = row[0], row[1], row[2]
         totals[route] += value
         current = peaks.get(route)
         if current is None or value > current["value"]:
@@ -244,14 +262,16 @@ def by_stop(
     end = date_to or (max(available) if available else None)
 
     total = 0.0
-    for (r, day, hour), value in dataset.forecast.items():
-        if r != route:
-            continue
-        if start and (day < start or day > end):
-            continue
-        if hour < hour_from or hour > hour_to:
-            continue
-        value = operational_value(route, day, hour, value, adjustment, network)
+    for _row, value in iter_rows(
+        dataset.forecast_index,
+        routes=[route],
+        start=start,
+        end=end,
+        hour_from=hour_from,
+        hour_to=hour_to,
+        adjustment=adjustment,
+        network=network,
+    ):
         total += value
 
     items = []
