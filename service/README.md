@@ -17,7 +17,9 @@ docker compose up --build
 
 Затем открыть:
 
-- http://localhost:8000 — интерфейс
+- http://localhost:8000 — интерфейс, если в `static/` положен фронтенд
+  (сборка фронт-команды или запасной, см. ниже); иначе здесь заглушка
+  со ссылкой на API
 - http://localhost:8000/api/docs — интерактивная документация API
 - http://localhost:8000/api/health — проверка живости
 
@@ -40,8 +42,9 @@ docker compose up --build
 с CDN, для подложки карты нужен интернет.
 
 ```bash
-mkdir -p service/static && cp frontend-fallback/index.html service/static/
-docker compose up --build   # в каталоге service; интерфейс на http://localhost:8000
+# из корня репозитория
+cp frontend-fallback/index.html service/static/
+cd service && docker compose up --build   # интерфейс на http://localhost:8000
 ```
 
 Без копирования, для отладки: открыть файл с диска с параметром
@@ -77,28 +80,35 @@ python loadtest/consistency.py --url http://localhost:8000
 
 Прогноз считается **пакетно, вне сервиса**, и кладётся файлом. Сервис только
 читает готовые значения из памяти и агрегирует их под запрос. Модель в момент
-обращения не работает — отсюда стабильные единицы миллисекунд под нагрузкой.
+обращения не работает — отсюда десятки миллисекунд p95 под нагрузкой
+(см. «Производительность»).
 
 Цепочка модулей:
 
 ```
-data/                          исходные файлы: прогноз, история, справочники
+data/                          входные файлы: прогноз, история, справочники
   │
 backend/app/pipeline/
-  ├── ingest.py                приём и нормализация данных
+  ├── ingest.py                чтение файлов прогноза и истории на старте
   ├── geo.py                   геопривязка: остановки, геометрия маршрутов
   ├── aggregate.py             агрегация: горизонты, маршруты, остановки
   ├── adjust.py                корректирующие коэффициенты
+  ├── network_events.py        события сети и вторичный эффект
+  ├── validations.py           приём потока валидаций
+  ├── shared_state.py          общее состояние воркеров через файлы тома
   └── cache.py                 кеш ответов
   │
 backend/app/api/               REST-слой
   ├── health.py                живость, метаданные, перезагрузка данных
   ├── reference.py             справочники маршрутов и остановок
   ├── forecast.py              прогноз с фильтрами
+  ├── preview.py               сценарий именованными опциями
   ├── export.py                выгрузка CSV и XLSX
+  ├── network.py               события сети
+  ├── validations.py           приём валидаций
   └── factors.py               внешние источники и область применимости
   │
-static/                        собранный фронтенд (подключается, если есть)
+static/                        фронтенд (подключается, если есть index.html)
 ```
 
 Обновление прогноза без перезапуска: заменить `data/submission.csv`
@@ -161,13 +171,17 @@ static/                        собранный фронтенд (подклю
 | `k_event` + `event_from` / `event_to` | `1.5` | Поправка на событие |
 | `k_routes` | `17:1.1,50:0.8` | Точечные поправки по маршрутам |
 
-Пример: похолодание с 1 по 10 декабря повышает спрос на 15%, на маршруте 50
-идут ремонтные работы:
+Пример ручного сценария (гипотезы диспетчера, не измеренные эффекты):
+крупное событие у линии 5–6 декабря (+15%, как опция `MAJOR` каталога
+релиза) и ремонт на маршруте 50:
 
 ```
-GET /api/forecast?horizon=month&k_weather=1.15
-    &weather_from=2025-12-01&weather_to=2025-12-10&k_routes=50:0.7
+GET /api/forecast?horizon=month&k_event=1.15
+    &event_from=2025-12-05&event_to=2025-12-06&k_routes=50:0.7
 ```
+
+Измеренные погодные коэффициенты значимы только для тёплого сезона
+(`GET /api/factors`); в ноябре–декабре эффект погоды не значим.
 
 Ответ содержит поле `adjustments` с описанием каждой применённой поправки.
 
@@ -311,7 +325,10 @@ docker stats tram-forecast --no-stream
 ```bash
 docker build -t tram-forecast .
 docker run --rm --name tram-forecast -p 8000:8000 --cpus=2 --memory=2g --memory-swap=2g \
-    -v "$PWD/data:/data:ro" -v tram-runtime:/runtime tram-forecast
+    -v "$PWD/data:/data:ro" -v tram-runtime:/runtime \
+    -v "$PWD/../configs:/configs:ro" -e RELEASE_CONFIG=/configs/release.json \
+    -v "$PWD/../release:/release:ro" -e FACTOR_OPTIONS=/release/factor_options.json \
+    tram-forecast
 ```
 
 `--memory-swap` равен `--memory`, то есть swap запрещён. Данные — только
@@ -413,7 +430,8 @@ Python дополнительно терял на конкуренции пот�
 
 ## Внешние источники данных
 
-Перечислены со ссылками в `GET /api/factors`. Источники кешируются локально:
+Перечислены со ссылками и измеренными эффектами в `GET /api/factors`
+и `docs/external-sources.md`. Источники кешируются локально:
 во время работы сервис не ходит во внешнюю сеть, поэтому демонстрация не
 зависит от доступности сторонних API.
 

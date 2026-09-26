@@ -78,18 +78,24 @@ python ml/baseline.py initial_data                    # ранний базла�
 ```bash
 cd service
 docker compose up --build   # данные уже в service/data/, подкладывать ничего не нужно
-# http://localhost:8000, API: http://localhost:8000/api/docs
+# http://localhost:8000/api/docs
 ```
+
+Интерфейс на http://localhost:8000 появляется, если перед сборкой положить
+фронтенд в `service/static/` — например, запасной дашборд:
+`cp frontend-fallback/index.html service/static/` (подробно —
+`service/README.md`).
 
 ### Нагрузочный тест
 
 ```bash
-python service/loadtest/loadtest.py --url http://localhost:8000 \
-    --duration 30 --threads 32
+python service/loadtest/loadtest.py --url http://localhost:8000 --duration 30 --threads 32
+python service/loadtest/loadtest.py --url http://localhost:8000 --duration 30 --threads 32 --cold
 ```
 
-Цифры из вывода обязательно вписать в `service/README.md` — это прямое
-требование ТЗ.
+Итог в контейнере 2 CPU / 2 GiB, два воркера: прогретый кеш 3 543 RPS при
+p95 21 мс, холодный 537 RPS при p95 90 мс — требование ТЗ выполняется
+в обоих режимах. Полная таблица — `service/README.md`.
 
 ---
 
@@ -101,7 +107,10 @@ docs/
   rubric.md             рубрика оценки с чек-листами
   data.md               что реально в датасете
   model.md              модель, валидация, журнал экспериментов
-  architecture.md       архитектура и область применимости
+  architecture.md       архитектура и область применимости (поле 4), схема .svg
+  external-sources.md   внешние источники с измеренными эффектами (поле 2)
+  defense_ml.md         ML-часть для защиты (ML-команда)
+  ml_release.md         релиз, model_prediction, коэффициенты
   decisions.md          решения и аргументы для защиты
   submission.md         чек-лист сдачи
   roadmap.md            что осталось, по приоритету баллов
@@ -119,13 +128,16 @@ configs/, release/      параметры модели и релиза, кон�
 data/external/          внешние источники с URL
 artifacts/, scripts/    ablation, бэктест, эксперименты
 tests/                  тесты пайплайна и релиза
+frontend-fallback/      запасной дашборд одним файлом
 service/
-  Dockerfile            один контейнер: API и статика
+  Dockerfile            один контейнер, два воркера: API и статика
   docker-compose.yml
-  README.md             запуск, эндпойнты, производительность
+  README.md             запуск, эндпойнты, ошибки, производительность
   backend/app/
-    pipeline/           приём → геопривязка → агрегация → коэффициенты
+    pipeline/           чтение данных → геопривязка → агрегация →
+                        коэффициенты → события сети; приём потока
     api/                REST-слой
+  static/               сюда кладётся фронтенд (в git только .gitkeep)
   data/                 прогноз, labels, справочники — всё для сервиса и пересборки
   loadtest/             нагрузочный тест и проверка согласованности воркеров
 initial_data/           сырые данные хакатона (~10 ГБ), в git нет; нужны только
@@ -175,5 +187,5 @@ initial_data/           сырые данные хакатона (~10 ГБ), в 
 
 ## Что делать дальше
 
-См. `docs/roadmap.md`. Коротко: фронтенд, внешние источники со ссылками,
-замеры производительности, заполнение формы.
+См. `docs/roadmap.md`. Коротко: заполнение формы сдачи, основной
+интерфейс (фронт-команда; пока — запасной дашборд), питч.

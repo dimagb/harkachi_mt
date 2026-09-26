@@ -49,18 +49,21 @@ service/backend/app/              ОНЛАЙН-КОНТУР
    ├─ pipeline/adjust.py          корректирующие коэффициенты (what-if)
    ├─ pipeline/network_events.py  события сети: закрытия, укорочения
    ├─ pipeline/validations.py     приём потока валидаций → почасовые агрегаты
+   ├─ pipeline/shared_state.py    общее состояние воркеров через файлы тома
    ├─ pipeline/cache.py           кеш ответов
    │
    ├─ api/health.py               живость, метаданные, перезагрузка данных
    ├─ api/reference.py            справочники маршрутов и остановок
    ├─ api/forecast.py             прогноз с фильтрами
+   ├─ api/preview.py              сценарий именованными опциями
    ├─ api/export.py               выгрузка CSV и XLSX
    ├─ api/network.py              события сети: GET, POST, DELETE
    ├─ api/validations.py          POST /api/ingest/validations, агрегаты
    └─ api/factors.py              внешние источники, область применимости
          │
          ▼
-service/static/                   фронтенд (карта, графики, коэффициенты)
+service/static/                   фронтенд: сборка фронт-команды или запасной
+                                  frontend-fallback/index.html
 ```
 
 Разделение соответствует требованию рубрики: приём и нормализация данных →
@@ -71,7 +74,9 @@ service/static/                   фронтенд (карта, графики, 
 ## Пакетный контур
 
 Запускается вручную, планировщик не нужен:
-`python -m ml.build_release --require-clean` (подробно — `docs/ml_release.md`).
+`python -m ml.build_release --require-clean --data service/data`
+(команда и проверка результата — `README.md`, «Быстрый старт»;
+подробно — `docs/ml_release.md`).
 
 1. Чтение `labels/labels_day_*.csv` — готовая целевая величина.
 2. Построение полной сетки «маршрут × дата × час», пропуски заполняются
@@ -104,15 +109,20 @@ service/static/                   фронтенд (карта, графики, 
 
 ### Точки входа API
 
+Каждый путь `/api/...` доступен также как `/api/v1/...`; `GET /health` —
+то же, что `/api/health`. Ошибки — единый формат `{code, message}`,
+коды в `service/README.md`.
+
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | `/api/health` | живость, размер данных, статистика кеша |
 | GET | `/api/meta` | что загружено, периоды, предупреждения геопривязки |
-| POST | `/api/reload` | перечитать файлы без перезапуска |
+| POST | `/api/reload` | перечитать файлы без перезапуска (алиас `/api/admin/reload-forecast`) |
 | GET | `/api/routes` | маршруты, наличие геометрии, исключения |
 | GET | `/api/stops?route=` | остановки с координатами |
 | GET | `/api/geometry?route=` | геометрия маршрутов в GeoJSON |
 | GET | `/api/forecast` | прогноз с фильтрами и агрегацией |
+| POST | `/api/forecast/preview` | сценарий: погода, событие, сезонная и ручная поправки |
 | GET | `/api/forecast/routes` | сводка по маршрутам |
 | GET | `/api/forecast/stops?route=` | разложение по остановкам (оценочное) |
 | GET | `/api/forecast/compare` | прогноз рядом с фактом |
@@ -123,7 +133,7 @@ service/static/                   фронтенд (карта, графики, 
 | GET | `/api/network-events` | активные события сети |
 | POST | `/api/network-events` | добавить закрытие, укорочение, ручной множитель |
 | DELETE | `/api/network-events/{id}` | снять событие |
-| POST | `/api/ingest/validations` | батч успешных валидаций (алиас `/api/v1/...`) |
+| POST | `/api/ingest/validations` | батч успешных валидаций |
 | GET | `/api/ingest/aggregates` | накопленные агрегаты по маршруту и дате |
 | GET | `/api/ingest/status` | счётчики приёма, последние батчи |
 
@@ -139,7 +149,9 @@ service/static/                   фронтенд (карта, графики, 
 и действуют для всех. Порядок: база → what-if → события. Активное
 закрытие даёт 0 при любых коэффициентах. База (`model_prediction`) не
 меняется никогда: ответ каждый раз строится от неё заново. После
-добавления или снятия события кеш ответов сбрасывается.
+добавления или снятия события кеш ответов сбрасывается. Единственный
+вторичный эффект — измеренное правило 17 → 11 × 1.1079, только в выходные
+внутри закрытия маршрута 17.
 
 ---
 
@@ -270,9 +282,11 @@ numpy, duckdb, pyarrow, pytest — и запускается вне сервис
 ## Запуск
 
 ```bash
+cd service
 docker compose up --build
 # http://localhost:8000/api/docs
 ```
 
 Данные лежат в репозитории, в `service/data/`, и монтируются в контейнер
-каталогом. Запись в него нужна только для `network_events.json`.
+только на чтение. Изменяемое состояние — в именованном томе `runtime`;
+`configs/` и `release/` монтируются для `/api/meta` и preview.
