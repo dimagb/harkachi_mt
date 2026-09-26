@@ -27,6 +27,16 @@ HORIZON_TO_GRANULARITY = {
 }
 
 
+def _alias(main, alias, main_name, alias_name):
+    """Имена из раздела 38 контракта — алиасы основных, не замена."""
+    if main is not None and alias is not None and main != alias:
+        raise ApiError(
+            400, "INVALID_PARAMETER",
+            f"Переданы и {main_name}, и его алиас {alias_name} с разными значениями",
+        )
+    return main if main is not None else alias
+
+
 @router.get("", summary="Прогноз с фильтрами и агрегацией")
 def get_forecast(
     routes: str | None = Query(None, description="Маршруты через запятую, напр. 17,25"),
@@ -44,8 +54,14 @@ def get_forecast(
     ),
     split_by_route: bool = Query(False, description="Разбить ряд по маршрутам"),
     source: str = Query("forecast", description="forecast или history"),
+    route: str | None = Query(None, description="Алиас routes (раздел 38 контракта)"),
+    from_: str | None = Query(None, alias="from", description="Алиас date_from"),
+    to: str | None = Query(None, description="Алиас date_to"),
     adjustment: Adjustment = Depends(adjustment_params),
 ) -> dict:
+    routes = _alias(routes, route, "routes", "route")
+    date_from = _alias(date_from, from_, "date_from", "from")
+    date_to = _alias(date_to, to, "date_to", "to")
     if horizon not in HORIZON_TO_GRANULARITY:
         raise ApiError(
             400, "INVALID_PARAMETER",

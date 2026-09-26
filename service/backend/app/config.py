@@ -43,6 +43,12 @@ RELEASE_CONFIG_PATH = Path(
     os.getenv("RELEASE_CONFIG", BASE_DIR.parent / "configs" / "release.json")
 )
 
+# Каталог what-if коэффициентов ML-релиза (погода по сезонам, события):
+# для POST /api/forecast/preview. В контейнере — смонтированный /release.
+FACTOR_OPTIONS_PATH = Path(
+    os.getenv("FACTOR_OPTIONS", BASE_DIR.parent / "release" / "factor_options.json")
+)
+
 # Каталог со статикой собранного фронтенда
 STATIC_DIR = Path(os.getenv("STATIC_DIR", BASE_DIR / "static"))
 

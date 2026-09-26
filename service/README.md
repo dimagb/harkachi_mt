@@ -106,6 +106,10 @@ static/                        собранный фронтенд (подклю
 
 ## Точки входа API
 
+Каждый путь `/api/...` доступен также как `/api/v1/...` — те же обработчики.
+`GET /health` — то же, что `/api/health`. В `GET /api/forecast` параметры
+`route`, `from`, `to` — алиасы `routes`, `date_from`, `date_to`.
+
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | `/api/health` | Живость, размер загруженных данных, статистика кеша |
@@ -125,7 +129,9 @@ static/                        собранный фронтенд (подклю
 | GET | `/api/network-events` | Активные события сети (`?include_inactive=true` — со снятыми) |
 | POST | `/api/network-events` | Добавить событие: закрытие, укорочение, ручной множитель |
 | DELETE | `/api/network-events/{id}` | Снять событие |
-| POST | `/api/ingest/validations` | Принять батч успешных валидаций (алиас `/api/v1/ingest/validations`) |
+| POST | `/api/forecast/preview` | Сценарий именованными опциями: погода, событие, сезонная и ручная поправки |
+| POST | `/api/admin/reload-forecast` | То же, что `POST /api/reload` |
+| POST | `/api/ingest/validations` | Принять батч успешных валидаций |
 | GET | `/api/ingest/aggregates` | Накопленные агрегаты: по маршруту и дате или почасово |
 | GET | `/api/ingest/status` | Счётчики приёма и последние батчи |
 

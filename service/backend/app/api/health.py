@@ -95,6 +95,7 @@ def meta() -> dict:
 
 
 @router.post("/reload", summary="Перечитать файлы данных без перезапуска")
+@router.post("/admin/reload-forecast", include_in_schema=False)
 def reload_data() -> dict:
     """Нужен, когда ML-команда подкладывает новый файл прогноза.
 

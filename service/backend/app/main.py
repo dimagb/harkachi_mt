@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from app import config
-from app.api import export, factors, forecast, health, network, reference
+from app.api import export, factors, forecast, health, network, preview, reference
 from app.api import validations as validations_api
 from app.api.deps import ApiError
 from app.pipeline import geo as geo_module
@@ -67,14 +67,9 @@ app.add_middleware(
 # чтобы проверять согласованность состояния между воркерами.
 WORKER_ID = str(os.getpid())
 
-CACHEABLE_PREFIXES = (
-    "/api/forecast",
-    "/api/routes",
-    "/api/stops",
-    "/api/geometry",
-    "/api/factors",
-    "/api/scope",
-)
+_CACHEABLE = ("/forecast", "/routes", "/stops", "/geometry", "/factors", "/scope")
+# Алиасы /api/v1 кешируются так же, как основные пути.
+CACHEABLE_PREFIXES = tuple(f"{root}{p}" for root in ("/api", "/api/v1") for p in _CACHEABLE)
 
 
 @app.middleware("http")
@@ -248,15 +243,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-app.include_router(health.router, prefix="/api")
-app.include_router(reference.router, prefix="/api")
-app.include_router(forecast.router, prefix="/api")
-app.include_router(export.router, prefix="/api")
-app.include_router(factors.router, prefix="/api")
-app.include_router(network.router, prefix="/api")
-app.include_router(validations_api.router, prefix="/api")
-# Алиас по разделу 36 контракта: те же обработчики, в документации один раз.
-app.include_router(validations_api.router, prefix="/api/v1", include_in_schema=False)
+ROUTERS = (
+    health.router, reference.router, forecast.router, preview.router,
+    export.router, factors.router, network.router, validations_api.router,
+)
+for _router in ROUTERS:
+    app.include_router(_router, prefix="/api")
+# Алиасы по разделу 36 контракта: /api/v1/... — те же обработчики,
+# в документации показаны один раз.
+for _router in ROUTERS:
+    app.include_router(_router, prefix="/api/v1", include_in_schema=False)
 
 
 @app.on_event("startup")
@@ -283,20 +279,29 @@ def warm_up() -> None:
         )
 
 
+@app.get("/health", include_in_schema=False)
+def health_alias() -> dict:
+    """GET /health — как в разделе 37 контракта; то же, что /api/health."""
+    return health.health()
+
+
 @app.get("/api", summary="Корень API")
+@app.get("/api/v1", include_in_schema=False)
 def api_root() -> dict:
     return {
         "service": config.APP_TITLE,
         "version": config.APP_VERSION,
         "docs": "/api/docs",
+        "aliases": "каждый путь /api/... доступен также как /api/v1/...",
         "endpoints": [
             "GET  /api/health",
             "GET  /api/meta",
-            "POST /api/reload",
+            "POST /api/reload  (алиас POST /api/admin/reload-forecast)",
             "GET  /api/routes",
             "GET  /api/stops?route=",
             "GET  /api/geometry?route=",
-            "GET  /api/forecast?routes=&date_from=&date_to=&horizon=",
+            "GET  /api/forecast?routes=&date_from=&date_to=&horizon=  (алиасы route, from, to)",
+            "POST /api/forecast/preview",
             "GET  /api/forecast/routes",
             "GET  /api/forecast/stops?route=",
             "GET  /api/forecast/compare",
@@ -307,7 +312,7 @@ def api_root() -> dict:
             "GET  /api/network-events",
             "POST /api/network-events",
             "DELETE /api/network-events/{id}",
-            "POST /api/ingest/validations  (алиас /api/v1/ingest/validations)",
+            "POST /api/ingest/validations",
             "GET  /api/ingest/aggregates?routes=&date_from=&date_to=&granularity=day|hour",
             "GET  /api/ingest/status",
         ],
