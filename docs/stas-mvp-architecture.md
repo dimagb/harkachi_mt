@@ -76,9 +76,11 @@
 >   (раздел 42). Опции, которой для сезона нет, нет и в сценарии — 400;
 > - параметры раздела 38 `route`, `from`, `to` — алиасы `routes`,
 >   `date_from`, `date_to` в `GET /api/forecast`;
-> - `/api/meta` (раздел 49): `release_id`, `model_version`, `score` (только
->   при совпадении md5 прогноза), `cutoff_date`, `forecast_from`,
->   `forecast_to`, `last_ingest_at`, `active_network_events`;
+> - `/api/meta` (раздел 49): `release_id`, `model_version`, `score` и
+>   `code_git_sha` (оба только при совпадении md5 прогноза; `code_git_sha`
+>   перенесён из `release_metadata` в `.duckdb` в `configs/release.json`,
+>   совпадение проверено), `cutoff_date`, `forecast_from`, `forecast_to`,
+>   `last_ingest_at`, `active_network_events`;
 > - ошибки раздела 40 — единый формат `{code, message}`;
 > - `network_impact_rules`: правило 17 → 11 × 1.1079 применяется только
 >   в выходные внутри дат закрытия (измерено на выходных).
@@ -88,8 +90,6 @@
 >   `operational_prediction` (раздел 38): `points[].value` — уже
 >   операционный прогноз (база → поправки → события). Базу без поправок
 >   дают `POST /api/forecast/preview` (`base`) и `/api/export/submission`;
-> - `code_git_sha` в `/api/meta` — `null`: он записан в `release_metadata`
->   внутри `.duckdb`, а сервис DuckDB не читает;
 > - сервис читает прогноз из `submission.csv`, а не из
 >   `forecast_release.duckdb` (значения те же, их пишет `build_release`);
 > - пересборка по принятому потоку не замкнута: сервис пишет агрегаты

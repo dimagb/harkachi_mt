@@ -50,21 +50,20 @@ def release_fields(dataset) -> dict:
         "cutoff_date": dataset.history_dates[-1].isoformat() if dataset.history_dates else None,
         "forecast_from": dataset.forecast_dates[0].isoformat() if dataset.forecast_dates else None,
         "forecast_to": dataset.forecast_dates[-1].isoformat() if dataset.forecast_dates else None,
-        # В configs/release.json его нет: коммит записан в release_metadata
-        # внутри forecast_release.duckdb, а DuckDB в образе сервиса нет.
-        "code_git_sha": None,
+        # Коммит, из которого сборка воспроизвела ровно этот прогноз. Перенесён
+        # из release_metadata в .duckdb в configs/release.json (DuckDB в образе
+        # нет); относится к тем же значениям, что и score, — то же правило md5.
+        "code_git_sha": scored.get("code_git_sha") if matches else None,
         "forecast_md5": dataset.forecast_md5,
     }
-    notes = [
-        "code_git_sha хранится в release_metadata файла "
-        "release/forecast_release.duckdb; сервис DuckDB не читает"
-    ]
+    notes = []
     if not matches:
         notes.append(
-            "score не показан: md5 загруженного прогноза не совпадает "
-            "с прогнозом, получившим score в configs/release.json"
+            "score и code_git_sha не показаны: md5 загруженного прогноза не "
+            "совпадает с прогнозом, получившим score в configs/release.json"
         )
-    fields["release_notes"] = notes
+    if notes:
+        fields["release_notes"] = notes
     return fields
 
 
