@@ -1,10 +1,11 @@
 # Каталог данных
 
-Положите сюда:
+Всё, что нужно сервису, лежит здесь и хранится в репозитории:
 
 - `submission.csv` — прогноз в формате сдачи: `route;date;hour;prediction`
 - `labels/labels_day_train.csv`, `labels/labels_day_test.csv` — история
 - `spravochniki/*.xlsx` — справочники с координатами остановок
 
 Каталог монтируется в контейнер только на чтение.
-Чтобы обновить прогноз, замените `submission.csv` и вызовите `POST /api/reload`.
+Чтобы подменить прогноз своим, замените `submission.csv` и вызовите
+`POST /api/reload`.

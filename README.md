@@ -32,9 +32,8 @@ python ml/baseline.py initial_data --sweep
 
 ```bash
 cd service
-# положить в data/: submission.csv, labels/, spravochniki/
-docker compose up --build
-# http://localhost:8000/api/docs
+docker compose up --build   # данные уже в service/data/, подкладывать ничего не нужно
+# http://localhost:8000, API: http://localhost:8000/api/docs
 ```
 
 ### Нагрузочный тест

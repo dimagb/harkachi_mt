@@ -6,27 +6,44 @@
 
 ## Запуск
 
+Все данные, нужные сервису, лежат в репозитории, в `data/`. Ничего
+скачивать и подкладывать не нужно:
+
 ```bash
-# 1. Положить данные
-#    data/submission.csv                 — прогноз в формате сдачи
-#    data/labels/labels_day_*.csv        — история для сравнения
-#    data/spravochniki/*.xlsx            — координаты остановок
-
-# 2. Поднять сервис
+git clone https://github.com/dimagb/harkachi_mt.git
+cd harkachi_mt/service
 docker compose up --build
-
-# 3. Открыть
-#    http://localhost:8000/api/docs      — интерактивная документация
-#    http://localhost:8000/api/health    — проверка живости
 ```
+
+Затем открыть:
+
+- http://localhost:8000 — интерфейс
+- http://localhost:8000/api/docs — интерактивная документация API
+- http://localhost:8000/api/health — проверка живости
+
+Что лежит в `data/` (около 1.6 МБ):
+
+| Файл | Что это |
+|---|---|
+| `submission.csv` | прогноз 1.11–31.12.2025, формат сдачи `route;date;hour;prediction` |
+| `labels/labels_day_*.csv` | фактические посадки январь–октябрь 2025, для сравнения |
+| `spravochniki/*.xlsx` | справочники организаторов: остановки и координаты |
+
+### Свой прогноз вместо нашего
+
+Положить файл того же формата в `data/submission.csv` и вызвать
+`POST /api/reload` — перезапуск не нужен, каталог монтируется в контейнер.
 
 Без Docker:
 
 ```bash
 cd backend
 pip install -r requirements.txt
-DATA_DIR=../data uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+DATA_DIR=../data uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
+
+Воркер один намеренно: состояние живёт в памяти процесса, причина
+в комментарии к `Dockerfile`.
 
 ## Архитектура
 

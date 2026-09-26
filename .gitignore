@@ -1,11 +1,9 @@
 __pycache__/
 *.pyc
+# Сырые train.csv и test.csv — около 10 ГБ. Всё, что нужно сервису,
+# лежит в service/data/ и коммитится: после git clone сервис стартует с данными.
 initial_data/
-service/data/*.csv
-service/data/labels/
-service/data/spravochniki/
 service/static/
 report.txt
-submission*.csv
 .venv/
 node_modules/
