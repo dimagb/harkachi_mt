@@ -28,6 +28,10 @@ services:
     # цифры, которых на 2 vCPU не будет.
     cpus: 2.0
     mem_limit: 2g
+    # Равен mem_limit — swap запрещён. Без этого Docker по умолчанию
+    # разрешает ещё столько же swap (MemorySwap = 4 GiB), и требование
+    # ТЗ «без swap» держалось бы на удаче, а не на настройке.
+    memswap_limit: 2g
     deploy:
       resources:
         limits:

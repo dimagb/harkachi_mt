@@ -7,6 +7,12 @@ ML отвечает за цепочку `данные → модель → forec
 > (`service/data/submission.csv`), который `build_release --submission` пишет из тех же значений.
 > Прогноз один и тот же; `release_metadata`, `factor_options` и `network_impact_rules` сервис
 > из `.duckdb` пока не читает — коэффициенты и правило продублированы в `GET /api/factors`.
+>
+> **Цикл «приём → пересборка» не замкнут.** Сервис принимает поток
+> (`POST /api/ingest/validations`) и пишет почасовые агрегаты
+> `route, date, hour, boardings, updated_at` в `data/validations_state.json`, а `--runtime`
+> ожидает таблицу `hourly_aggregates` в `runtime.duckdb`. Конвертера JSON → DuckDB нет:
+> приём и пересборка работают по отдельности, вместе — нет.
 
 ## Команды
 ```bash
@@ -19,6 +25,8 @@ python -m ml.build_release --require-clean --output release/forecast_release.duc
 python -m ml.build_release --data /data --output /data/forecast_release.duckdb
 
 # rebuild после ingest: почасовые агрегаты из runtime.duckdb продлевают историю
+# ВНИМАНИЕ: сервис пишет агрегаты не в runtime.duckdb, а в data/validations_state.json
+# (см. ниже «Состояние сервиса») — конвертера нет, эта команда по принятому потоку не запускается
 python -m ml.build_release --data /data --runtime /data/runtime.duckdb --output /data/forecast_release.duckdb
 
 # прогноз следующего периода (история до 31.12.2025 в labels/*.csv)
