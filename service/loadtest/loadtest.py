@@ -34,18 +34,25 @@ ENDPOINTS = [
 ]
 
 
-def worker(base_url, deadline, latencies, statuses, lock, stop_event):
+def worker(base_url, deadline, latencies, statuses, cache_marks, lock,
+           stop_event, cold, worker_id):
     local_lat = []
     local_status = Counter()
+    local_cache = Counter()
     index = 0
     while time.time() < deadline and not stop_event.is_set():
         path = ENDPOINTS[index % len(ENDPOINTS)]
         index += 1
+        if cold:
+            # Кеш ключуется полной строкой запроса, поэтому уникальный
+            # параметр гарантирует MISS: считается весь путь запроса.
+            path += ("&" if "?" in path else "?") + f"_nc={worker_id}-{index}"
         started = time.perf_counter()
         try:
             with urllib.request.urlopen(base_url + path, timeout=10) as response:
                 response.read()
                 code = response.status
+                local_cache[response.headers.get("X-Cache", "none")] += 1
         except urllib.error.HTTPError as exc:
             code = exc.code
         except Exception:  # noqa: BLE001 — таймауты и обрывы тоже считаем
@@ -56,6 +63,7 @@ def worker(base_url, deadline, latencies, statuses, lock, stop_event):
     with lock:
         latencies.extend(local_lat)
         statuses.update(local_status)
+        cache_marks.update(local_cache)
 
 
 def percentile(values, share):
@@ -72,7 +80,13 @@ def main():
     parser.add_argument("--duration", type=int, default=30, help="секунд")
     parser.add_argument("--threads", type=int, default=32)
     parser.add_argument("--warmup", type=int, default=3, help="секунд прогрева")
+    parser.add_argument(
+        "--cold", action="store_true",
+        help="каждый запрос уникален — кеш ответов не попадает ни разу",
+    )
     args = parser.parse_args()
+    if args.cold:
+        args.warmup = 0
 
     base_url = args.url.rstrip("/")
 
@@ -95,9 +109,11 @@ def main():
                 if time.time() >= end:
                     break
 
-    print(f"Нагрузка: {args.threads} потоков, {args.duration} с\n")
+    mode = "холодный кеш (--cold)" if args.cold else "прогретый кеш"
+    print(f"Нагрузка: {args.threads} потоков, {args.duration} с, {mode}\n")
     latencies: list = []
     statuses: Counter = Counter()
+    cache_marks: Counter = Counter()
     lock = threading.Lock()
     stop_event = threading.Event()
     deadline = time.time() + args.duration
@@ -105,10 +121,11 @@ def main():
     threads = [
         threading.Thread(
             target=worker,
-            args=(base_url, deadline, latencies, statuses, lock, stop_event),
+            args=(base_url, deadline, latencies, statuses, cache_marks, lock,
+                  stop_event, args.cold, n),
             daemon=True,
         )
-        for _ in range(args.threads)
+        for n in range(args.threads)
     ]
 
     started = time.perf_counter()
@@ -133,6 +150,11 @@ def main():
     if len(statuses) > 1:
         print(f"  прочие коды:       {dict(statuses)}")
     print(f"  RPS:               {total / elapsed:.0f}")
+    hits, misses = cache_marks.get("HIT", 0), cache_marks.get("MISS", 0)
+    print(f"  режим:             {mode}")
+    print(f"  X-Cache:           HIT {hits}, MISS {misses}, "
+          f"без кеша {cache_marks.get('none', 0)} "
+          f"(доля попаданий {100 * hits / max(hits + misses, 1):.1f}%)")
     print()
     print(f"  latency p50:       {percentile(latencies, 0.50):.1f} мс")
     print(f"  latency p95:       {percentile(latencies, 0.95):.1f} мс")
