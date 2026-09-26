@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 from fastapi import FastAPI, Request
@@ -32,6 +33,7 @@ from app.api.deps import ApiError
 from app.pipeline import geo as geo_module
 from app.pipeline import network_events
 from app.pipeline import validations
+from app.pipeline.shared_state import signature
 from app.pipeline.cache import cache as response_cache
 from app.pipeline.ingest import get_dataset
 
@@ -60,6 +62,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# PID воркера в заголовке X-Worker: видно, какой процесс ответил. Нужно,
+# чтобы проверять согласованность состояния между воркерами.
+WORKER_ID = str(os.getpid())
 
 CACHEABLE_PREFIXES = (
     "/api/forecast",
@@ -100,7 +106,15 @@ async def timing_and_cache(request: Request, call_next):
     cacheable = request.method == "GET" and path.startswith(CACHEABLE_PREFIXES)
 
     if cacheable:
-        key = f"{path}?{request.url.query}"
+        # В ключе — подписи файла событий сети и метки перезагрузки. Добавили
+        # закрытие через любой воркер или перезагрузили данные — ключи во всех
+        # процессах сразу другие, и устаревший ответ не отдаётся нигде:
+        # межпроцессная инвалидация без общего кеша. Два stat на запрос.
+        state = (
+            signature(config.NETWORK_EVENTS_PATH),
+            signature(config.RELOAD_MARKER_PATH),
+        )
+        key = f"{path}?{request.url.query}#{state}"
         cached = response_cache.get(key)
         if cached is not None:
             elapsed_ms = (time.perf_counter() - started) * 1000
@@ -111,6 +125,7 @@ async def timing_and_cache(request: Request, call_next):
                 headers={
                     "X-Process-Time-ms": f"{elapsed_ms:.2f}",
                     "X-Cache": "HIT",
+                    "X-Worker": WORKER_ID,
                 },
             )
 
@@ -121,7 +136,7 @@ async def timing_and_cache(request: Request, call_next):
         chunks = [chunk async for chunk in response.body_iterator]
         body = b"".join(chunks)
         response_cache.set(
-            f"{path}?{request.url.query}",
+            key,
             {
                 "body": body,
                 "status": response.status_code,
@@ -137,11 +152,13 @@ async def timing_and_cache(request: Request, call_next):
             headers={
                 "X-Process-Time-ms": f"{elapsed_ms:.2f}",
                 "X-Cache": "MISS",
+                "X-Worker": WORKER_ID,
             },
         )
 
     elapsed_ms = (time.perf_counter() - started) * 1000
     response.headers["X-Process-Time-ms"] = f"{elapsed_ms:.2f}"
+    response.headers["X-Worker"] = WORKER_ID
     return response
 
 

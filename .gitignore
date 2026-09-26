@@ -10,6 +10,10 @@ service/data/network_events.json.tmp
 # Состояние приёма валидаций (агрегаты и batch_id) — тоже состояние демо.
 service/data/validations_state.json
 service/data/validations_state.json.tmp
+# Локальный запуск без Docker: RUNTIME_DIR по умолчанию = data/
+service/data/reload.marker
+service/data/*.lock
+service/data/*.tmp
 service/static/
 report.txt
 .venv/

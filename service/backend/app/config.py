@@ -12,16 +12,28 @@ DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
 # Файл прогноза в формате сдачи: route;date;hour;prediction
 FORECAST_FILE = os.getenv("FORECAST_FILE", "submission.csv")
 
+# Изменяемое состояние сервиса — отдельно от входных данных. Через эти
+# файлы воркеры uvicorn видят изменения друг друга (pipeline/shared_state.py),
+# поэтому каталог должен быть на локальной ФС: в Docker — именованный том.
+# Для локального запуска по умолчанию совпадает с DATA_DIR.
+RUNTIME_DIR = Path(os.getenv("RUNTIME_DIR", DATA_DIR))
+
 # События сети (закрытия, укорочения, ручные множители). Это состояние
 # сервиса, а не входные данные: файл пишется самим сервисом.
 NETWORK_EVENTS_PATH = Path(
-    os.getenv("NETWORK_EVENTS_FILE", DATA_DIR / "network_events.json")
+    os.getenv("NETWORK_EVENTS_FILE", RUNTIME_DIR / "network_events.json")
+)
+
+# Метка перезагрузки: POST /api/reload меняет её, и каждый воркер,
+# заметив это, перечитывает прогноз, историю и справочники.
+RELOAD_MARKER_PATH = Path(
+    os.getenv("RELOAD_MARKER_FILE", RUNTIME_DIR / "reload.marker")
 )
 
 # Приём потоковых валидаций: почасовые агрегаты и обработанные batch_id.
 # Тоже состояние сервиса, а не входные данные.
 VALIDATIONS_PATH = Path(
-    os.getenv("VALIDATIONS_FILE", DATA_DIR / "validations_state.json")
+    os.getenv("VALIDATIONS_FILE", RUNTIME_DIR / "validations_state.json")
 )
 
 # Каталог со статикой собранного фронтенда

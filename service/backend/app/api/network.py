@@ -152,15 +152,19 @@ def create_event(body: NetworkEventIn) -> dict:
     fields = _validate(body)
     repo = ne.get_repository()
 
-    candidate = ne.NetworkEvent(id=0, active=True, created_at="", **fields)
-    duplicate = repo.find_duplicate(candidate)
-    if duplicate is not None:
+    # Проверка дубликата — внутри add, под межпроцессной блокировкой:
+    # отдельная проверка до записи пропустила бы два одинаковых события,
+    # добавленных одновременно через разные воркеры.
+    try:
+        event = repo.add(fields)
+    except ne.DuplicateEventError as exc:
+        duplicate = exc.existing
         raise ApiError(
             409, "DUPLICATE_EVENT",
             f"Такое событие уже активно: id {duplicate.id}, «{duplicate.title}»",
-        )
-
-    event = repo.add(fields)
+        ) from exc
+    # Свой кеш сбрасываем сразу; остальные воркеры промахнутся сами —
+    # подпись файла событий входит в ключ кеша (main.py).
     response_cache.invalidate()
     result = event.as_dict()
     if getattr(repo, "persist_error", None):

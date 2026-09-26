@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
+
+from app.pipeline.shared_state import atomic_write, file_lock, signature
 
 log = logging.getLogger(__name__)
 
@@ -191,13 +192,19 @@ class NetworkEventRepository:
 
 
 class JsonNetworkEventRepository(NetworkEventRepository):
-    """События в JSON-файле, рабочая копия в памяти.
+    """События в JSON-файле; файл — источник правды для всех воркеров.
+
+    Рабочая копия в памяти перечитывается, как только меняется подпись
+    файла (один stat на вызов) — так закрытие, добавленное через один
+    воркер, следующий же запрос видит в любом другом. Запись — под
+    межпроцессной блокировкой: прочитать свежее → изменить → записать
+    атомарно (shared_state).
 
     Снятое событие не удаляется, а получает active=false: остаётся след,
-    что и когда было закрыто. Запись атомарная — через временный файл
-    и os.replace, чтобы обрыв посреди записи не оставил битый JSON.
-    Если каталог только для чтения, события живут в памяти до перезапуска,
-    сервис при этом не падает.
+    что и когда было закрыто. Если каталог только для чтения, события
+    живут в памяти одного воркера до перезапуска — сервис не падает, но
+    при нескольких воркерах это расхождение, поэтому RUNTIME_DIR обязан
+    быть доступен на запись.
     """
 
     def __init__(self, path: Path) -> None:
@@ -205,85 +212,122 @@ class JsonNetworkEventRepository(NetworkEventRepository):
         self._lock = threading.Lock()
         self._events: list[NetworkEvent] = []
         self._effect = NetworkEffect([])
+        self._signature: tuple | None = None
         self.persist_error: str | None = None
         self.reload()
 
+    # --- чтение: файл — источник правды для всех воркеров
+
+    def _read_file(self) -> list[NetworkEvent]:
+        if not self.path.exists():
+            return []
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8") or "[]")
+            return [NetworkEvent.from_dict(item) for item in raw]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            log.error("События сети: %s не прочитан (%s)", self.path, exc)
+            return self._events
+
+    def _install(self, events: list[NetworkEvent], sig: tuple | None) -> None:
+        self._events = events
+        self._effect = NetworkEffect(events)
+        self._signature = sig
+
     def reload(self) -> None:
-        events: list[NetworkEvent] = []
-        if self.path.exists():
-            try:
-                raw = json.loads(self.path.read_text(encoding="utf-8") or "[]")
-                events = [NetworkEvent.from_dict(item) for item in raw]
-            except (OSError, ValueError, KeyError, TypeError) as exc:
-                log.error("События сети: %s не прочитан (%s)", self.path, exc)
+        with file_lock(self.path):
+            sig = signature(self.path)
+            events = self._read_file()
         with self._lock:
-            self._events = events
-            self._effect = NetworkEffect(events)
+            self._install(events, sig)
         log.info(
             "События сети: загружено %d, активных %d",
             len(events), len(self._effect.events),
         )
 
+    def _refresh(self) -> None:
+        """Один stat на вызов: файл изменил другой воркер — перечитать."""
+        if signature(self.path) != self._signature:
+            self.reload()
+
     def list(self, include_inactive: bool = False) -> list[NetworkEvent]:
+        self._refresh()
         events = self._events
         return list(events) if include_inactive else [e for e in events if e.active]
 
     def get(self, event_id: int) -> NetworkEvent | None:
+        self._refresh()
         return next((e for e in self._events if e.id == event_id), None)
 
     def find_duplicate(self, candidate: NetworkEvent) -> NetworkEvent | None:
+        self._refresh()
         key = candidate.identity()
         return next(
             (e for e in self._events if e.active and e.identity() == key), None
         )
 
+    def effect(self) -> NetworkEffect:
+        self._refresh()
+        return self._effect
+
+    # --- запись: прочитать свежее → изменить → записать, всё под блокировкой
+
     def add(self, fields: dict) -> NetworkEvent:
-        with self._lock:
-            next_id = max((e.id for e in self._events), default=0) + 1
+        """Добавить событие. Дубликат активного события — DuplicateEventError:
+        проверка внутри блокировки, иначе два воркера добавили бы одно
+        и то же событие одновременно."""
+        with self._lock, file_lock(self.path):
+            events = self._read_file()
+            probe = NetworkEvent(id=0, active=True, created_at="", **fields)
+            duplicate = next(
+                (e for e in events if e.active and e.identity() == probe.identity()),
+                None,
+            )
+            if duplicate is not None:
+                self._install(events, signature(self.path))
+                raise DuplicateEventError(duplicate)
+            next_id = max((e.id for e in events), default=0) + 1
             event = NetworkEvent(
                 id=next_id,
                 active=True,
                 created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 **fields,
             )
-            self._commit(self._events + [event])
+            self._commit(events + [event])
         return event
 
     def deactivate(self, event_id: int) -> NetworkEvent | None:
-        with self._lock:
-            current = next((e for e in self._events if e.id == event_id), None)
-            if current is None:
-                return None
-            if not current.active:
+        with self._lock, file_lock(self.path):
+            events = self._read_file()
+            current = next((e for e in events if e.id == event_id), None)
+            if current is None or not current.active:
+                self._install(events, signature(self.path))
                 return current
             updated = replace(current, active=False)
-            self._commit(
-                [updated if e.id == event_id else e for e in self._events]
-            )
+            self._commit([updated if e.id == event_id else e for e in events])
         return updated
 
-    def effect(self) -> NetworkEffect:
-        return self._effect
-
     def _commit(self, events: list[NetworkEvent]) -> None:
-        """Под блокировкой: сохранить на диск и подменить снимок."""
-        self._events = events
-        self._effect = NetworkEffect(events)
+        """Под обеими блокировками: сохранить на диск и подменить снимок."""
         payload = json.dumps(
             [e.as_dict() for e in events], ensure_ascii=False, indent=2
         )
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(payload, encoding="utf-8")
-            os.replace(tmp, self.path)
+            atomic_write(self.path, payload)
             self.persist_error = None
         except OSError as exc:
             self.persist_error = str(exc)
             log.warning(
-                "События сети не сохранены в %s (%s) — действуют до перезапуска",
+                "События сети не сохранены в %s (%s) — действуют до перезапуска "
+                "и только в этом воркере",
                 self.path, exc,
             )
+        self._install(events, signature(self.path))
+
+
+class DuplicateEventError(Exception):
+    def __init__(self, existing: NetworkEvent) -> None:
+        super().__init__(f"duplicate of {existing.id}")
+        self.existing = existing
 
 
 _repository: NetworkEventRepository | None = None

@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from app import config
 from app.pipeline import geo as geo_module
 from app.pipeline import network_events, validations
+from app.pipeline.shared_state import bump_reload_marker
 from app.pipeline.cache import cache as response_cache
 from app.pipeline.ingest import get_dataset, reload_dataset
 
@@ -53,11 +54,23 @@ def meta() -> dict:
 
 @router.post("/reload", summary="Перечитать файлы данных без перезапуска")
 def reload_data() -> dict:
-    """Нужен, когда ML-команда подкладывает новый файл прогноза."""
+    """Нужен, когда ML-команда подкладывает новый файл прогноза.
+
+    Сначала меняется метка перезагрузки: по ней остальные воркеры
+    перечитают данные на своём следующем запросе, а ключи кеша сменятся
+    во всех процессах сразу (подпись метки входит в ключ, main.py).
+    """
+    shared = bump_reload_marker()
     dataset = reload_dataset()
     network_events.get_repository().reload()
     validations.get_repository().reload()
     response_cache.clear()
     geo_module._geo = None  # noqa: SLF001 — намеренный сброс кэша
     geo_module.get_geo()
-    return {"status": "reloaded", "data": dataset.stats}
+    result = {"status": "reloaded", "data": dataset.stats}
+    if not shared:
+        result["warning"] = (
+            "Метку перезагрузки записать не удалось: остальные воркеры "
+            "продолжают работать на старых данных"
+        )
+    return result

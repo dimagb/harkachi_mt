@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import threading
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from app import config
+from app.pipeline.shared_state import reload_generation
 
 log = logging.getLogger(__name__)
 
@@ -274,18 +276,30 @@ def load() -> Dataset:
 
 
 _dataset: Dataset | None = None
+_dataset_generation: tuple | None = None
+_dataset_lock = threading.Lock()
 
 
 def get_dataset() -> Dataset:
-    global _dataset
-    if _dataset is None:
-        _dataset = load()
+    """Данные в памяти процесса. Если другой воркер выполнил POST /api/reload,
+    метка перезагрузки изменилась — перечитать файлы здесь тоже (один stat
+    на вызов)."""
+    global _dataset, _dataset_generation
+    generation = reload_generation()
+    if _dataset is None or generation != _dataset_generation:
+        with _dataset_lock:
+            if _dataset is None or generation != _dataset_generation:
+                _dataset = load()
+                _dataset_generation = generation
     return _dataset
 
 
 def reload_dataset() -> Dataset:
     """Перечитать данные без перезапуска сервиса — нужно, когда ML-команда
-    подкладывает новый файл прогноза."""
-    global _dataset
-    _dataset = load()
+    подкладывает новый файл прогноза. Остальные воркеры перечитают по метке
+    перезагрузки, которую ставит POST /api/reload."""
+    global _dataset, _dataset_generation
+    with _dataset_lock:
+        _dataset = load()
+        _dataset_generation = reload_generation()
     return _dataset

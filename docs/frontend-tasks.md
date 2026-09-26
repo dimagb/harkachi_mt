@@ -625,19 +625,21 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.12-slim
-ENV DATA_DIR=/data STATIC_DIR=/app/static
+ENV DATA_DIR=/data RUNTIME_DIR=/runtime STATIC_DIR=/app/static
 WORKDIR /app
 COPY service/backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY service/backend/app ./app
 COPY --from=frontend /build/dist ./static
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
 ```
 
-Один воркер — так и надо, не опечатка. Состояние сервиса живёт в памяти
-процесса, при двух воркерах добавленное закрытие маршрута увидит только
-один из них. Причина подробно расписана в комментарии к Dockerfile.
+Два воркера — как в `service/Dockerfile`. Это безопасно только вместе
+с `ENV RUNTIME_DIR=/runtime` и томом `runtime` из `service/docker-compose.yml`:
+через файлы в нём воркеры видят изменения друг друга. Если собираете
+свой образ — возьмите `ENV` и том оттуда, иначе закрытие маршрута увидит
+только один воркер из двух. Причина расписана в комментарии к Dockerfile.
 
 ### Порядок работы
 

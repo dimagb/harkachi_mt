@@ -30,13 +30,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 import threading
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+from app.pipeline.shared_state import atomic_write, file_lock, signature
 
 log = logging.getLogger(__name__)
 
@@ -193,12 +194,13 @@ class ValidationRepository:
 
 
 class JsonValidationRepository(ValidationRepository):
-    """Состояние в JSON-файле, рабочая копия в памяти.
+    """Состояние в JSON-файле; файл — источник правды для всех воркеров.
 
     Файл маленький: агрегаты ограничены сеткой маршрут × дата × час, батчи —
-    одна строка на batch_id. Запись атомарная — через временный файл и
-    os.replace. Если каталог только для чтения, состояние живёт в памяти до
-    перезапуска, приём не падает.
+    одна строка на batch_id. Рабочая копия перечитывается при смене подписи
+    файла, запись — под межпроцессной блокировкой (shared_state). Если
+    каталог только для чтения, состояние живёт в памяти одного воркера до
+    перезапуска — приём не падает, но RUNTIME_DIR должен быть на запись.
     """
 
     def __init__(self, path: Path) -> None:
@@ -206,37 +208,58 @@ class JsonValidationRepository(ValidationRepository):
         self._lock = threading.Lock()
         self._aggregates: dict = {}   # (route, date_iso, hour) → {boardings, updated_at}
         self._batches: dict = {}      # batch_id → запись о батче
+        self._signature: tuple | None = None
         self.persist_error: str | None = None
         self.reload()
 
-    def reload(self) -> None:
+    def _read_file(self) -> tuple[dict, dict]:
         aggregates: dict = {}
         batches: dict = {}
-        if self.path.exists():
-            try:
-                raw = json.loads(self.path.read_text(encoding="utf-8") or "{}")
-                for row in raw.get("hourly_aggregates", []):
-                    key = (int(row["route"]), str(row["date"]), int(row["hour"]))
-                    aggregates[key] = {
-                        "boardings": int(row["boardings"]),
-                        "updated_at": row.get("updated_at"),
-                    }
-                for item in raw.get("batches", []):
-                    batches[item["batch_id"]] = item
-            except (OSError, ValueError, KeyError, TypeError) as exc:
-                log.error("Приём валидаций: %s не прочитан (%s)", self.path, exc)
+        if not self.path.exists():
+            return aggregates, batches
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8") or "{}")
+            for row in raw.get("hourly_aggregates", []):
+                key = (int(row["route"]), str(row["date"]), int(row["hour"]))
+                aggregates[key] = {
+                    "boardings": int(row["boardings"]),
+                    "updated_at": row.get("updated_at"),
+                }
+            for item in raw.get("batches", []):
+                batches[item["batch_id"]] = item
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            log.error("Приём валидаций: %s не прочитан (%s)", self.path, exc)
+            return self._aggregates, self._batches
+        return aggregates, batches
+
+    def reload(self) -> None:
+        with file_lock(self.path):
+            sig = signature(self.path)
+            aggregates, batches = self._read_file()
         with self._lock:
-            self._aggregates = aggregates
-            self._batches = batches
+            self._aggregates, self._batches, self._signature = aggregates, batches, sig
         log.info(
             "Приём валидаций: батчей %d, агрегатов %d", len(batches), len(aggregates)
         )
 
+    def _refresh(self) -> None:
+        """Один stat на вызов: батч принял другой воркер — перечитать."""
+        if signature(self.path) != self._signature:
+            self.reload()
+
     def get_batch(self, batch_id: str) -> dict | None:
+        self._refresh()
         return self._batches.get(batch_id)
 
     def apply(self, batch: ParsedBatch) -> tuple[bool, dict]:
-        with self._lock:
+        # Проверка batch_id и запись — под межпроцессной блокировкой и по
+        # свежему файлу: иначе один батч, пришедший в два воркера сразу,
+        # засчитался бы дважды.
+        with self._lock, file_lock(self.path):
+            fresh_aggregates, fresh_batches = self._read_file()
+            self._aggregates, self._batches = fresh_aggregates, fresh_batches
+            self._signature = signature(self.path)
+
             existing = self._batches.get(batch.batch_id)
             if existing is not None:
                 return True, existing
@@ -267,6 +290,7 @@ class JsonValidationRepository(ValidationRepository):
 
     def aggregates(self, routes=None, date_from: date | None = None,
                    date_to: date | None = None) -> list[dict]:
+        self._refresh()
         wanted = set(routes) if routes else None
         start = date_from.isoformat() if date_from else None
         end = date_to.isoformat() if date_to else None
@@ -289,6 +313,7 @@ class JsonValidationRepository(ValidationRepository):
         return rows
 
     def stats(self) -> dict:
+        self._refresh()
         batches = self._batches
         last = max((b["processed_at"] for b in batches.values()), default=None)
         return {
@@ -300,11 +325,12 @@ class JsonValidationRepository(ValidationRepository):
         }
 
     def recent_batches(self, limit: int = 20) -> list[dict]:
+        self._refresh()
         items = sorted(self._batches.values(), key=lambda b: b["processed_at"], reverse=True)
         return items[:limit]
 
     def _persist(self) -> None:
-        """Под блокировкой: сохранить на диск."""
+        """Под обеими блокировками: сохранить на диск и запомнить подпись."""
         payload = json.dumps(
             {
                 "hourly_aggregates": [
@@ -316,18 +342,17 @@ class JsonValidationRepository(ValidationRepository):
             ensure_ascii=False,
             indent=1,
         )
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(payload, encoding="utf-8")
-            os.replace(tmp, self.path)
+            atomic_write(self.path, payload)
             self.persist_error = None
         except OSError as exc:
             self.persist_error = str(exc)
             log.warning(
-                "Приём валидаций: состояние не сохранено в %s (%s) — действует до перезапуска",
+                "Приём валидаций: состояние не сохранено в %s (%s) — действует до "
+                "перезапуска и только в этом воркере",
                 self.path, exc,
             )
+        self._signature = signature(self.path)
 
 
 _repository: ValidationRepository | None = None
