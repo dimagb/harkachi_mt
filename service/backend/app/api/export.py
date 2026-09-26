@@ -6,10 +6,17 @@ import csv
 import io
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import adjustment_params, parse_date_param, parse_routes_param
+from app.api.deps import (
+    ApiError,
+    adjustment_params,
+    check_hours,
+    check_period,
+    parse_date_param,
+    parse_routes_param,
+)
 from app.pipeline.adjust import Adjustment
 from app.pipeline.aggregate import iter_rows
 from app.pipeline.ingest import get_dataset
@@ -56,14 +63,19 @@ def export(
 ):
     fmt = format.lower().strip()
     if fmt not in ("csv", "xlsx"):
-        raise HTTPException(
-            status_code=400, detail="format принимает значения csv или xlsx"
-        )
+        raise ApiError(400, "INVALID_PARAMETER", "format принимает значения csv или xlsx")
+    check_hours(hour_from, hour_to)
+    start = parse_date_param(date_from, "date_from")
+    end = parse_date_param(date_to, "date_to")
+    route_list = parse_routes_param(routes)
+    # Период целиком вне прогноза — ошибка; частичный выход в CSV не
+    # сообщить, файл просто строится по пересечению.
+    check_period(get_dataset(), "forecast", start, end)
 
     rows = _collect(
-        parse_routes_param(routes),
-        parse_date_param(date_from, "date_from"),
-        parse_date_param(date_to, "date_to"),
+        route_list,
+        start,
+        end,
         hour_from,
         hour_to,
         adjustment,
@@ -88,9 +100,8 @@ def export(
     try:
         from openpyxl import Workbook
     except ImportError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Выгрузка в XLSX недоступна: не установлен openpyxl",
+        raise ApiError(
+            503, "EXPORT_UNAVAILABLE", "Выгрузка в XLSX недоступна: не установлен openpyxl"
         ) from exc
 
     workbook = Workbook()

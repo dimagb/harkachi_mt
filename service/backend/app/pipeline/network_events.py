@@ -107,6 +107,56 @@ class NetworkEvent:
         )
 
 
+@dataclass(frozen=True)
+class SecondaryRule:
+    """Измеренный вторичный эффект: закрытие маршрута-источника меняет
+    спрос на маршруте-цели. Только измеренные правила (раздел 23 контракта):
+    ml/transfer_experiment.py, artifacts/transfer_experiment.md."""
+
+    event_type: str
+    source_route: int
+    target_route: int
+    factor: float
+    evidence: str
+    caveat: str
+
+    def describe(self, closure: "NetworkEvent") -> dict:
+        return {
+            "kind": "secondary",
+            "event_type": self.event_type,
+            "source_route": self.source_route,
+            "target_route": self.target_route,
+            "factor": self.factor,
+            "source_event_id": closure.id,
+            "valid_from": closure.valid_from.isoformat(),
+            "valid_to": closure.valid_to.isoformat() if closure.valid_to else None,
+            "label": (
+                f"Маршрут {self.target_route} ×{self.factor:.3f}: перетекание "
+                f"пассажиров при закрытии маршрута {self.source_route}"
+            ),
+            "evidence": self.evidence,
+            "caveat": self.caveat,
+        }
+
+
+SECONDARY_RULES = (
+    SecondaryRule(
+        event_type=FULL_CLOSURE,
+        source_route=17,
+        target_route=11,
+        factor=1.1079,
+        evidence=(
+            "4 из 4 дней > 1 (1.028–1.143), шум 4.3%, placebo p < 0.0001, "
+            "без любого одного дня 1.084–1.131"
+        ),
+        caveat=(
+            "Измерено на 4 выходных днях апреля 2025; маршрут 17 тогда возил "
+            "1–13% обычного объёма, а не ноль; перенос на будни — экстраполяция"
+        ),
+    ),
+)
+
+
 class NetworkEffect:
     """Неизменяемый снимок активных событий для hot path.
 
@@ -121,20 +171,38 @@ class NetworkEffect:
         for event in self.events:
             by_route.setdefault(event.route, []).append(event)
         self._by_route = by_route
-        # Маршруты с событиями: остальные hot path пропускает без вызова apply.
-        self.routes = frozenset(by_route)
+
+        # Вторичные эффекты: цель правила → (правило, закрытия маршрута-
+        # источника). Правило включается, только если есть активное
+        # FULL_CLOSURE на маршруте-источнике; без таких событий этого словаря
+        # нет, и арифметика прогноза не меняется ни на бит.
+        secondary: dict = {}
+        for rule in SECONDARY_RULES:
+            closures = tuple(
+                e for e in by_route.get(rule.source_route, ())
+                if e.type == rule.event_type
+            )
+            if closures:
+                secondary.setdefault(rule.target_route, []).append((rule, closures))
+        self._secondary = secondary
+
+        # Маршруты с событиями или вторичным эффектом: остальные hot path
+        # пропускает без вызова apply.
+        self.routes = frozenset(by_route) | frozenset(secondary)
         # (маршрут, день) → события, покрывающие этот день, в исходном
         # порядке. Заполняется лениво; снимок неизменяемый, поэтому гонка
         # двух запросов безвредна — оба запишут одно и то же.
         self._by_route_day: dict = {}
+        self._secondary_day: dict = {}
 
     @property
     def is_empty(self) -> bool:
         return not self._by_route
 
     def apply(self, route: int, day: date, hour: int, value: float) -> float:
-        events = self._by_route.get(route)
-        if not events:
+        events = self._by_route.get(route, ())
+        secondary = self._secondary.get(route)
+        if not events and not secondary:
             return value
         todays = self._by_route_day.get((route, day))
         if todays is None:
@@ -147,7 +215,44 @@ class NetworkEffect:
             if event.type == FULL_CLOSURE:
                 return 0.0
             product *= event.factor if event.factor is not None else 1.0
+        # Вторичный эффект — после прямых, до max(…, 0). Включается только
+        # в дни и часы, когда закрыт маршрут-источник.
+        if secondary:
+            for rule, closures in self._secondary_today(route, day, secondary):
+                if any(c.covers_hour(hour) for c in closures):
+                    product *= rule.factor
         return max(value * product, 0.0)
+
+    def _secondary_today(self, route: int, day: date, secondary: list) -> tuple:
+        key = (route, day)
+        cached = self._secondary_day.get(key)
+        if cached is None:
+            cached = tuple(
+                (rule, active)
+                for rule, closures in secondary
+                if (active := tuple(c for c in closures if c.covers_day(day)))
+            )
+            self._secondary_day[key] = cached
+        return cached
+
+    def secondary_effects(
+        self,
+        routes: list | None = None,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> list[dict]:
+        """Вторичные эффекты, действующие на запрошенный период и маршруты.
+        Отдельной записью в ответе — чтобы было видно, откуда изменение."""
+        wanted = set(routes) if routes else None
+        result = []
+        for target, pairs in self._secondary.items():
+            if wanted is not None and target not in wanted:
+                continue
+            for rule, closures in pairs:
+                for closure in closures:
+                    if closure.overlaps(start, end):
+                        result.append(rule.describe(closure))
+        return result
 
     def relevant(
         self,

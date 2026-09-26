@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import logging
 import threading
 from bisect import bisect_left, bisect_right
@@ -143,6 +144,7 @@ class Dataset:
     history_dates: list = field(default_factory=list)
     loaded_at: datetime = field(default_factory=datetime.utcnow)
     source_files: dict = field(default_factory=dict)
+    forecast_md5: str | None = None
 
     # --- производные срезы, считаются один раз на старте
     forecast_by_route_date: dict = field(default_factory=dict)
@@ -252,6 +254,12 @@ def load() -> Dataset:
     dataset.forecast, forecast_files = load_forecast(
         data_dir, config.FORECAST_FILE
     )
+    # md5 байтов файла прогноза: по нему /api/meta решает, относится ли
+    # score из configs/release.json к тому, что сервис реально отдаёт.
+    if forecast_files:
+        dataset.forecast_md5 = hashlib.md5(
+            (data_dir / forecast_files[0]).read_bytes()
+        ).hexdigest()
     dataset.history, history_files = load_history(data_dir)
 
     dataset.routes = sorted(

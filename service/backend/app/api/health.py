@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter
 
 from app import config
@@ -27,12 +29,52 @@ def health() -> dict:
     }
 
 
+def release_fields(dataset) -> dict:
+    """Метаданные ML-релиза для /api/meta (раздел 49 контракта).
+
+    Нет configs/release.json или он битый — пусто, /api/meta работает как
+    раньше. score отдаётся, только если md5 загруженного прогноза совпадает
+    с тем, что получил этот score: подменили файл — score не показывается.
+    """
+    try:
+        rel = json.loads(config.RELEASE_CONFIG_PATH.read_text(encoding="utf-8"))
+        scored = rel.get("scored_forecast") or {}
+        release_id, model_version = rel["release_id"], rel["model_version"]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+    matches = bool(dataset.forecast_md5) and dataset.forecast_md5 == scored.get("forecast_md5")
+    fields = {
+        "release_id": release_id,
+        "model_version": model_version,
+        "score": scored.get("score") if matches else None,
+        "cutoff_date": dataset.history_dates[-1].isoformat() if dataset.history_dates else None,
+        "forecast_from": dataset.forecast_dates[0].isoformat() if dataset.forecast_dates else None,
+        "forecast_to": dataset.forecast_dates[-1].isoformat() if dataset.forecast_dates else None,
+        # В configs/release.json его нет: коммит записан в release_metadata
+        # внутри forecast_release.duckdb, а DuckDB в образе сервиса нет.
+        "code_git_sha": None,
+        "forecast_md5": dataset.forecast_md5,
+    }
+    notes = [
+        "code_git_sha хранится в release_metadata файла "
+        "release/forecast_release.duckdb; сервис DuckDB не читает"
+    ]
+    if not matches:
+        notes.append(
+            "score не показан: md5 загруженного прогноза не совпадает "
+            "с прогнозом, получившим score в configs/release.json"
+        )
+    fields["release_notes"] = notes
+    return fields
+
+
 @router.get("/meta", summary="Что загружено в сервис")
 def meta() -> dict:
     dataset = get_dataset()
     geo = geo_module.get_geo()
     ingest = validations.get_repository().stats()
     return {
+        **release_fields(dataset),
         "app": {"title": config.APP_TITLE, "version": config.APP_VERSION},
         # Раздел 49 контракта: видно живьём, что поток доезжает.
         "last_ingest_at": ingest["last_ingest_at"],

@@ -21,9 +21,13 @@ services:
       # воркер увидел бы закрытие с опозданием. Переживает перезапуск;
       # сбросить состояние демо — docker compose down -v.
       - runtime:/runtime
+      # Конфигурация ML-релиза: release_id, model_version, score и md5
+      # прогноза — для /api/meta. Лежит вне контекста сборки образа.
+      - ../configs:/configs:ro
     environment:
       DATA_DIR: /data
       RUNTIME_DIR: /runtime
+      RELEASE_CONFIG: /configs/release.json
       FORECAST_FILE: submission.csv
     restart: unless-stopped
     # Лимиты из НФТ. Задаются дважды намеренно: ключи cpus/mem_limit

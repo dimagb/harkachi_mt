@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.pipeline.network_events import SECONDARY_RULES
+
 router = APIRouter(tags=["данные и применимость"])
 
 ABLATION_METHOD = (
@@ -235,18 +237,23 @@ EXTERNAL_SOURCES = [
 
 # Вторичные эффекты изменений сети: ml/transfer_experiment.py,
 # artifacts/transfer_experiment.md. Из 23 проверенных пар опубликовано одно.
+# Источник правды — SECONDARY_RULES, которые сервис и применяет.
 NETWORK_IMPACT_RULES = [
     {
-        "event_type": "FULL_CLOSURE",
-        "source_route": 17,
-        "target_route": 11,
-        "factor": 1.1079,
-        "evidence": (
-            "4 из 4 дней > 1 (1.028–1.143), шум 4.3%, placebo p < 0.0001, "
-            "без любого одного дня 1.084–1.131; выходные апреля 2025"
+        "event_type": rule.event_type,
+        "source_route": rule.source_route,
+        "target_route": rule.target_route,
+        "factor": rule.factor,
+        "evidence": rule.evidence,
+        "caveat": rule.caveat,
+        "applied_in_service": True,
+        "applied_when": (
+            f"активно FULL_CLOSURE маршрута {rule.source_route}; только в его дни "
+            f"и часы; после прямых эффектов событий на маршруте {rule.target_route}, "
+            "до max(прогноз, 0); в ответе — отдельной записью secondary_effects"
         ),
-        "applied_in_service": False,
-    },
+    }
+    for rule in SECONDARY_RULES
 ]
 
 MODEL_SCOPE = {
@@ -283,8 +290,9 @@ MODEL_SCOPE = {
         "одно правило — закрытие маршрута 17 даёт маршруту 11 × 1.108, "
         "измерено на 4 выходных днях апреля. Для остальных пар перетекание "
         "в данных не наблюдается. Данные видят только трамвай: ушедших "
-        "в метро и на автобусы не видно. В сервисе вторичные эффекты пока "
-        "не применяются.",
+        "в метро и на автобусы не видно. Правило 17 → 11 применяется "
+        "в сервисе при активном закрытии маршрута 17; перенос на будни — "
+        "экстраполяция.",
         "Погода в прогноз не входит: в холодный сезон её эффект не значим; "
         "измеренные коэффициенты тёплого сезона доступны как what-if.",
     ],

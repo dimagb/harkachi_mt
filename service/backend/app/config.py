@@ -36,6 +36,13 @@ VALIDATIONS_PATH = Path(
     os.getenv("VALIDATIONS_FILE", RUNTIME_DIR / "validations_state.json")
 )
 
+# Конфигурация ML-релиза: release_id, model_version, score и md5 прогноза,
+# получившего этот score. Локально — configs/ в корне репозитория,
+# в контейнере — смонтированный /configs (см. docker-compose.yml).
+RELEASE_CONFIG_PATH = Path(
+    os.getenv("RELEASE_CONFIG", BASE_DIR.parent / "configs" / "release.json")
+)
+
 # Каталог со статикой собранного фронтенда
 STATIC_DIR = Path(os.getenv("STATIC_DIR", BASE_DIR / "static"))
 

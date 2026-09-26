@@ -21,8 +21,8 @@ import os
 import time
 
 from fastapi import FastAPI, Request
-from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
@@ -164,40 +164,87 @@ async def timing_and_cache(request: Request, call_next):
 
 @app.exception_handler(ApiError)
 async def api_error_handler(request: Request, exc: ApiError):
+    return error_response(exc.status, exc.code, exc.message)
+
+
+# Единый формат ошибок всего API (раздел 40 контракта): {"code", "message"}.
+# Поле detail дублирует message — старый фронт читал текст оттуда.
+def error_response(status: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
-        status_code=exc.status,
-        content={"code": exc.code, "message": exc.message, "detail": exc.message},
+        status_code=status,
+        content={"code": code, "message": message, "detail": message},
     )
+
+
+def _explain(err: dict) -> str:
+    """Ошибка валидации FastAPI человеческими словами."""
+    kind = err.get("type", "")
+    ctx = err.get("ctx") or {}
+    if kind == "missing":
+        return "обязательный параметр не передан"
+    if kind in ("float_parsing", "float_type"):
+        return f"должно быть числом, получено {err.get('input')!r}"
+    if kind in ("int_parsing", "int_type"):
+        return f"должно быть целым числом, получено {err.get('input')!r}"
+    if kind == "greater_than_equal":
+        return f"должно быть не меньше {ctx.get('ge')}, получено {err.get('input')}"
+    if kind == "less_than_equal":
+        return f"должно быть не больше {ctx.get('le')}, получено {err.get('input')}"
+    if kind == "bool_parsing":
+        return f"должно быть true или false, получено {err.get('input')!r}"
+    return err.get("msg", "неверное значение")
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):
-    """Битый JSON или пустое тело на приёме — 422 INVALID_BATCH в формате
-    контракта. На остальных путях формат ошибок FastAPI не меняется."""
-    if request.url.path in validations_api.INGEST_PATHS:
-        first = exc.errors()[0] if exc.errors() else {}
+    """Ошибки разбора параметров и тела — в формате контракта, с кодом
+    по смыслу: коэффициенты — INVALID_SCENARIO, маршрут — INVALID_ROUTE."""
+    path = request.url.path
+    errors = exc.errors()
+    first = errors[0] if errors else {}
+    if path in validations_api.INGEST_PATHS:
         reason = first.get("msg", "тело запроса не разобрано")
-        return JSONResponse(
-            status_code=422,
-            content={
-                "code": "INVALID_BATCH",
-                "message": f"Тело запроса должно быть JSON-объектом с batch_id и records: {reason}",
-            },
+        return error_response(
+            422, "INVALID_BATCH",
+            f"Тело запроса должно быть JSON-объектом с batch_id и records: {reason}",
         )
-    return await request_validation_exception_handler(request, exc)
+    loc = first.get("loc", ())
+    where = loc[0] if loc else ""
+    name = str(loc[-1]) if len(loc) > 1 else ""
+    text = f"{name}: {_explain(first)}" if name else _explain(first)
+    if where == "query" and name.startswith("k_"):
+        return error_response(400, "INVALID_SCENARIO", f"Коэффициент {text}")
+    if where in ("query", "path") and name in ("route", "routes"):
+        return error_response(400, "INVALID_ROUTE", f"Маршрут: {text}")
+    if where in ("query", "path"):
+        return error_response(400, "INVALID_PARAMETER", f"Параметр {text}")
+    if path.startswith(("/api/network-events", "/api/v1/network-events")):
+        return error_response(400, "INVALID_EVENT", f"Тело запроса: {text}")
+    return error_response(422, "INVALID_REQUEST", f"Тело запроса: {text}")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    """404 неизвестного пути, 405 и прочие ошибки уровня HTTP — тоже
+    в едином формате, а не {"detail": "Not Found"}."""
+    codes = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
+    message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+    if exc.status_code == 404:
+        message = (
+            f"Эндпойнт {request.url.path} не существует. "
+            "Список — GET /api, документация — /api/docs"
+        )
+    elif exc.status_code == 405:
+        message = f"Метод {request.method} не поддерживается для {request.url.path}"
+    return error_response(exc.status_code, codes.get(exc.status_code, "HTTP_ERROR"), message)
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Понятное сообщение вместо стектрейса — требование надёжности из ТЗ."""
     log.exception("Необработанная ошибка на %s", request.url.path)
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "internal_error",
-            "detail": "Внутренняя ошибка сервиса. Подробности в логах.",
-            "path": request.url.path,
-        },
+    return error_response(
+        500, "INTERNAL_ERROR", "Внутренняя ошибка сервиса. Подробности в логах."
     )
 
 
@@ -299,13 +346,10 @@ if (config.STATIC_DIR / "index.html").is_file():
     def spa(full_path: str):
         # Неизвестные пути API должны отдавать понятный JSON, а не страницу.
         if full_path.startswith("api"):
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "error": "not_found",
-                    "detail": f"Эндпойнт /{full_path} не существует. "
-                              "Список — GET /api, документация — /api/docs",
-                },
+            return error_response(
+                404, "NOT_FOUND",
+                f"Эндпойнт /{full_path} не существует. "
+                "Список — GET /api, документация — /api/docs",
             )
         if full_path:
             candidate = (STATIC_ROOT / full_path).resolve()
@@ -314,13 +358,7 @@ if (config.STATIC_DIR / "index.html").is_file():
                 return FileResponse(candidate)
         if INDEX_FILE.is_file():
             return FileResponse(INDEX_FILE)
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": "not_found",
-                "detail": "Каталог статики есть, но index.html в нём нет",
-            },
-        )
+        return error_response(404, "NOT_FOUND", "index.html пропал из каталога статики")
 
     log.info("Статика фронтенда подключена из %s", config.STATIC_DIR)
 else:

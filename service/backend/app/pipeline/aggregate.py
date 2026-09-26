@@ -173,6 +173,15 @@ def series(
         ),
     }
 
+    # Ключ появляется только при действующем вторичном эффекте: без событий
+    # ответ байт в байт прежний.
+    if network is not None:
+        secondary = network.secondary_effects(
+            sorted(wanted_routes) if wanted_routes else None, start, end
+        )
+        if secondary:
+            result["secondary_effects"] = secondary
+
     if split_by_route:
         result["by_route"] = {
             str(route): [

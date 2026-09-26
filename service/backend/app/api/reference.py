@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
 from app import config
+from app.api.deps import check_route
 from app.pipeline import geo as geo_module
 from app.pipeline.ingest import get_dataset
 
@@ -59,12 +60,8 @@ def _start_note(route: int, dataset) -> str | None:
 def stops(route: int | None = Query(None, description="Номер маршрута")) -> dict:
     geo = geo_module.get_geo()
     if route is not None:
-        if route not in config.ROUTES:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Маршрут {route} не входит в набор задачи",
-            )
-        items = [stop.as_dict() for stop in geo.stops(route)]
+        check_route(route)
+        items =[stop.as_dict() for stop in geo.stops(route)]
         return {
             "route": route,
             "stops": items,
@@ -87,6 +84,8 @@ def stops(route: int | None = Query(None, description="Номер маршрут
 @router.get("/geometry", summary="Геометрия маршрутов в GeoJSON")
 def geometry(route: int | None = Query(None)) -> dict:
     geo = geo_module.get_geo()
+    if route is not None:
+        check_route(route)
     targets = [route] if route is not None else geo.routes
     features = []
     for item in targets:
