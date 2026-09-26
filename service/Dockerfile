@@ -16,9 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
 
-# Каталог со статикой фронтенда. Пока фронта нет — остаётся пустым,
-# сервис отдаёт только API. Когда фронт появится, положите сюда сборку.
-RUN mkdir -p /app/static /data /runtime
+# Статика фронтенда: всё, что лежит в service/static/. В git там только
+# .gitkeep, и тогда сервис отдаёт одно API. Запасной интерфейс ставится
+# копированием: cp frontend-fallback/index.html service/static/ — и он
+# войдёт в образ при сборке. Сборка фронтенд-команды кладётся туда же.
+COPY static/ ./static/
+RUN mkdir -p /data /runtime
 
 EXPOSE 8000
 
