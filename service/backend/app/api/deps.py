@@ -9,6 +9,20 @@ from fastapi import HTTPException, Query
 from app.pipeline.adjust import Adjustment, parse_route_factors
 
 
+class ApiError(Exception):
+    """Ошибка с кодом из контракта (раздел 40): {"code": ..., "message": ...}.
+
+    Обработчик в main.py отдаёт её в этом формате. Поле detail дублирует
+    message, чтобы фронт читал текст ошибки одинаково со старыми эндпойнтами.
+    """
+
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.message = message
+
+
 def parse_date_param(value: str | None, name: str) -> date | None:
     if not value:
         return None

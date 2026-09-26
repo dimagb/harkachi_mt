@@ -23,6 +23,11 @@ class ResponseCache:
         self._max_entries = max_entries
         self.hits = 0
         self.misses = 0
+        # Растёт при каждой инвалидации. Ответ, который начал считаться до
+        # инвалидации, а закончил после, в кеш не попадает — иначе запрос,
+        # стартовавший до POST /api/network-events, закешировал бы прогноз
+        # без только что добавленного закрытия.
+        self.generation = 0
 
     def get(self, key: str):
         with self._lock:
@@ -33,16 +38,25 @@ class ResponseCache:
             self.misses += 1
             return None
 
-    def set(self, key: str, value) -> None:
+    def set(self, key: str, value, generation: int | None = None) -> None:
         with self._lock:
+            if generation is not None and generation != self.generation:
+                return
             self._store[key] = value
             self._store.move_to_end(key)
             while len(self._store) > self._max_entries:
                 self._store.popitem(last=False)
 
+    def invalidate(self) -> None:
+        """Сбросить ответы, сохранив счётчики попаданий."""
+        with self._lock:
+            self._store.clear()
+            self.generation += 1
+
     def clear(self) -> None:
         with self._lock:
             self._store.clear()
+            self.generation += 1
             self.hits = 0
             self.misses = 0
 

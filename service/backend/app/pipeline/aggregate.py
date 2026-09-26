@@ -19,6 +19,7 @@ from app import config
 from app.pipeline import geo as geo_module
 from app.pipeline.adjust import Adjustment
 from app.pipeline.ingest import Dataset
+from app.pipeline.network_events import NetworkEffect
 
 GRANULARITIES = ("hour", "day", "month")
 
@@ -44,6 +45,26 @@ def _bucket_label(key: str, granularity: str) -> str:
     return key
 
 
+def operational_value(
+    route: int,
+    day: date,
+    hour: int,
+    value: float,
+    adjustment: Adjustment | None,
+    network: NetworkEffect | None,
+) -> float:
+    """База → поправки пользователя → события сети.
+
+    События последними: закрытие обнуляет результат независимо от любых
+    коэффициентов (раздел 26 контракта).
+    """
+    if adjustment is not None and not adjustment.is_identity:
+        value = value * adjustment.factor(route, day)
+    if network is not None and not network.is_empty:
+        value = network.apply(route, day, hour, value)
+    return value
+
+
 def series(
     dataset: Dataset,
     *,
@@ -56,10 +77,15 @@ def series(
     source: str = "forecast",
     adjustment: Adjustment | None = None,
     split_by_route: bool = False,
+    network: NetworkEffect | None = None,
 ) -> dict:
     """Основная выборка. Возвращает ряд точек и сводку."""
     if granularity not in GRANULARITIES:
         granularity = "hour"
+
+    # События сети — про будущее, к фактической истории они не относятся.
+    if source != "forecast":
+        network = None
 
     store = dataset.forecast if source == "forecast" else dataset.history
     available = dataset.forecast_dates if source == "forecast" else dataset.history_dates
@@ -70,6 +96,7 @@ def series(
             "points": [],
             "summary": {"total": 0.0, "peak": None, "rows": 0},
             "adjustments": [],
+            "network_events": [],
         }
 
     start = date_from or min(available)
@@ -88,8 +115,7 @@ def series(
             continue
         if hour < hour_from or hour > hour_to:
             continue
-        if adjustment is not None and not adjustment.is_identity:
-            value = value * adjustment.factor(route, day)
+        value = operational_value(route, day, hour, value, adjustment, network)
         key = _bucket_key(day, hour, granularity)
         totals[key] += value
         if split_by_route:
@@ -126,6 +152,11 @@ def series(
             "buckets": len(points),
         },
         "adjustments": adjustment.describe() if adjustment else [],
+        "network_events": (
+            network.relevant(sorted(wanted_routes) if wanted_routes else None, start, end)
+            if network is not None
+            else []
+        ),
     }
 
     if split_by_route:
@@ -145,6 +176,7 @@ def route_totals(
     date_from: date | None = None,
     date_to: date | None = None,
     adjustment: Adjustment | None = None,
+    network: NetworkEffect | None = None,
 ) -> list:
     """Сводка по маршрутам за период — для карты и списка слева."""
     available = dataset.forecast_dates
@@ -158,8 +190,7 @@ def route_totals(
     for (route, day, hour), value in dataset.forecast.items():
         if day < start or day > end:
             continue
-        if adjustment is not None and not adjustment.is_identity:
-            value = value * adjustment.factor(route, day)
+        value = operational_value(route, day, hour, value, adjustment, network)
         totals[route] += value
         current = peaks.get(route)
         if current is None or value > current["value"]:
@@ -196,6 +227,7 @@ def by_stop(
     hour_from: int = 0,
     hour_to: int = 23,
     adjustment: Adjustment | None = None,
+    network: NetworkEffect | None = None,
 ) -> dict:
     """Разложение маршрутного прогноза по остановкам.
 
@@ -219,8 +251,7 @@ def by_stop(
             continue
         if hour < hour_from or hour > hour_to:
             continue
-        if adjustment is not None and not adjustment.is_identity:
-            value = value * adjustment.factor(route, day)
+        value = operational_value(route, day, hour, value, adjustment, network)
         total += value
 
     items = []
@@ -254,6 +285,7 @@ def compare_with_history(
     *,
     routes: list | None = None,
     granularity: str = "day",
+    network: NetworkEffect | None = None,
 ) -> dict:
     """Прогноз рядом с фактом за сопоставимый прошлый период.
 
@@ -272,6 +304,7 @@ def compare_with_history(
         routes=routes,
         granularity=granularity,
         source="forecast",
+        network=network,
     )
     history = series(
         dataset,

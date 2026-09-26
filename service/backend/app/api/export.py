@@ -11,14 +11,17 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import adjustment_params, parse_date_param, parse_routes_param
 from app.pipeline.adjust import Adjustment
+from app.pipeline.aggregate import operational_value
 from app.pipeline.ingest import get_dataset
+from app.pipeline.network_events import get_repository as network_repository
 
 router = APIRouter(prefix="/export", tags=["выгрузка"])
 
 HEADER = ["route", "date", "hour", "prediction"]
 
 
-def _collect(routes, date_from, date_to, hour_from, hour_to, adjustment):
+def _collect(routes, date_from, date_to, hour_from, hour_to, adjustment,
+             network=None):
     dataset = get_dataset()
     wanted = set(routes) if routes else None
     rows = []
@@ -31,8 +34,7 @@ def _collect(routes, date_from, date_to, hour_from, hour_to, adjustment):
             continue
         if hour < hour_from or hour > hour_to:
             continue
-        if adjustment is not None and not adjustment.is_identity:
-            value = value * adjustment.factor(route, day)
+        value = operational_value(route, day, hour, value, adjustment, network)
         rows.append((route, day.isoformat(), hour, round(value)))
     rows.sort(key=lambda item: (item[0], item[1], item[2]))
     return rows
@@ -66,6 +68,8 @@ def export(
         hour_from,
         hour_to,
         adjustment,
+        # Выгрузка совпадает с тем, что на экране: с событиями сети.
+        network_repository().effect(),
     )
 
     if fmt == "csv":
@@ -116,7 +120,10 @@ def export(
 
 @router.get("/submission", summary="Выгрузка в формате сдачи на лидерборд")
 def export_submission():
-    """Полная сетка 10 маршрутов × 61 день × 24 часа без поправок."""
+    """Полная сетка 10 маршрутов × 61 день × 24 часа без поправок.
+
+    И без событий сети: это model_prediction в формате лидерборда.
+    """
     rows = _collect(None, None, None, 0, 23, None)
     buffer = io.StringIO()
     writer = csv.writer(buffer, delimiter=";", lineterminator="\n")

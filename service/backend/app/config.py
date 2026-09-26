@@ -12,6 +12,12 @@ DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
 # Файл прогноза в формате сдачи: route;date;hour;prediction
 FORECAST_FILE = os.getenv("FORECAST_FILE", "submission.csv")
 
+# События сети (закрытия, укорочения, ручные множители). Это состояние
+# сервиса, а не входные данные: файл пишется самим сервисом.
+NETWORK_EVENTS_PATH = Path(
+    os.getenv("NETWORK_EVENTS_FILE", DATA_DIR / "network_events.json")
+)
+
 # Каталог со статикой собранного фронтенда
 STATIC_DIR = Path(os.getenv("STATIC_DIR", BASE_DIR / "static"))
 

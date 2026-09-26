@@ -3,6 +3,10 @@ __pycache__/
 # Сырые train.csv и test.csv — около 10 ГБ. Всё, что нужно сервису,
 # лежит в service/data/ и коммитится: после git clone сервис стартует с данными.
 initial_data/
+# События сети пишет сам сервис во время работы. Не коммитить: закрытие,
+# добавленное на демо, у жюри обнулило бы маршрут.
+service/data/network_events.json
+service/data/network_events.json.tmp
 service/static/
 report.txt
 .venv/

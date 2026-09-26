@@ -9,6 +9,7 @@ from app.api.deps import adjustment_params, parse_date_param, parse_routes_param
 from app.pipeline import aggregate
 from app.pipeline.adjust import Adjustment
 from app.pipeline.ingest import get_dataset
+from app.pipeline.network_events import get_repository as network_repository
 
 router = APIRouter(prefix="/forecast", tags=["прогноз"])
 
@@ -70,6 +71,7 @@ def get_forecast(
         source=source,
         adjustment=adjustment,
         split_by_route=split_by_route,
+        network=network_repository().effect(),
     )
     result["horizon"] = horizon
     return result
@@ -82,15 +84,20 @@ def forecast_by_routes(
     adjustment: Adjustment = Depends(adjustment_params),
 ) -> dict:
     dataset = get_dataset()
+    network = network_repository().effect()
+    start = parse_date_param(date_from, "date_from")
+    end = parse_date_param(date_to, "date_to")
     return {
         "period": {"from": date_from, "to": date_to},
         "routes": aggregate.route_totals(
             dataset,
-            date_from=parse_date_param(date_from, "date_from"),
-            date_to=parse_date_param(date_to, "date_to"),
+            date_from=start,
+            date_to=end,
             adjustment=adjustment,
+            network=network,
         ),
         "adjustments": adjustment.describe(),
+        "network_events": network.relevant(None, start, end),
     }
 
 
@@ -109,15 +116,20 @@ def forecast_by_stops(
             detail=f"Маршрут {route} не входит в набор задачи: {config.ROUTES}",
         )
     dataset = get_dataset()
+    network = network_repository().effect()
+    start = parse_date_param(date_from, "date_from")
+    end = parse_date_param(date_to, "date_to")
     result = aggregate.by_stop(
         dataset,
         route,
-        date_from=parse_date_param(date_from, "date_from"),
-        date_to=parse_date_param(date_to, "date_to"),
+        date_from=start,
+        date_to=end,
         hour_from=hour_from,
         hour_to=hour_to,
         adjustment=adjustment,
+        network=network,
     )
+    result["network_events"] = network.relevant([route], start, end)
     if not result["stops"]:
         result["note"] = (
             f"Для маршрута {route} в справочниках нет координат остановок. "
@@ -137,4 +149,5 @@ def compare(
         dataset,
         routes=parse_routes_param(routes),
         granularity=granularity,
+        network=network_repository().effect(),
     )

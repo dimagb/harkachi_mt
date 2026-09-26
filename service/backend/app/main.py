@@ -24,8 +24,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from app import config
-from app.api import export, factors, forecast, health, reference
+from app.api import export, factors, forecast, health, network, reference
+from app.api.deps import ApiError
 from app.pipeline import geo as geo_module
+from app.pipeline import network_events
 from app.pipeline.cache import cache as response_cache
 from app.pipeline.ingest import get_dataset
 
@@ -91,6 +93,7 @@ async def timing_and_cache(request: Request, call_next):
                 },
             )
 
+    generation = response_cache.generation
     response = await call_next(request)
 
     if cacheable and response.status_code == 200:
@@ -103,6 +106,7 @@ async def timing_and_cache(request: Request, call_next):
                 "status": response.status_code,
                 "media_type": response.media_type,
             },
+            generation=generation,
         )
         elapsed_ms = (time.perf_counter() - started) * 1000
         return Response(
@@ -118,6 +122,14 @@ async def timing_and_cache(request: Request, call_next):
     elapsed_ms = (time.perf_counter() - started) * 1000
     response.headers["X-Process-Time-ms"] = f"{elapsed_ms:.2f}"
     return response
+
+
+@app.exception_handler(ApiError)
+async def api_error_handler(request: Request, exc: ApiError):
+    return JSONResponse(
+        status_code=exc.status,
+        content={"code": exc.code, "message": exc.message, "detail": exc.message},
+    )
 
 
 @app.exception_handler(Exception)
@@ -139,6 +151,7 @@ app.include_router(reference.router, prefix="/api")
 app.include_router(forecast.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(factors.router, prefix="/api")
+app.include_router(network.router, prefix="/api")
 
 
 @app.on_event("startup")
@@ -147,6 +160,7 @@ def warm_up() -> None:
     started = time.perf_counter()
     dataset = get_dataset()
     geo = geo_module.get_geo()
+    network_events.get_repository()
     elapsed = time.perf_counter() - started
     log.info(
         "Готов за %.2f с: прогноз %d строк, история %d строк, "
@@ -184,6 +198,9 @@ def api_root() -> dict:
             "GET  /api/export/submission",
             "GET  /api/factors",
             "GET  /api/scope",
+            "GET  /api/network-events",
+            "POST /api/network-events",
+            "DELETE /api/network-events/{id}",
         ],
     }
 

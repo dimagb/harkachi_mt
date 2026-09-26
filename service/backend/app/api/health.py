@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from app import config
 from app.pipeline import geo as geo_module
+from app.pipeline import network_events
 from app.pipeline.cache import cache as response_cache
 from app.pipeline.ingest import get_dataset, reload_dataset
 
@@ -48,6 +49,7 @@ def meta() -> dict:
 def reload_data() -> dict:
     """Нужен, когда ML-команда подкладывает новый файл прогноза."""
     dataset = reload_dataset()
+    network_events.get_repository().reload()
     response_cache.clear()
     geo_module._geo = None  # noqa: SLF001 — намеренный сброс кэша
     geo_module.get_geo()
