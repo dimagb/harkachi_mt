@@ -1,0 +1,13 @@
+{
+  "release_id": "hackathon-v7",
+  "model_version": "statistical-v6",
+  "schema_version": "1.0",
+  "mode": "leaderboard",
+  "zero_routes": [5],
+  "scored_forecast": {
+    "score": 0.88987,
+    "forecast_md5": "96b297e84e18ae66410fc6831aaa2f6b",
+    "note": "md5 of the jury CSV (route;date;hour;prediction, LF line endings) that received this score; release_metadata.score is filled only if the built forecast has exactly this hash"
+  },
+  "comment": "mode=leaderboard: all published network events + final calibration x1.012 (the hackathon release); mode=production: only information known at the cutoff, no calibration (for forecasts of new periods). zero_routes: team decision (route 5 = 0)."
+}
