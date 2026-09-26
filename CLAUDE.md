@@ -407,7 +407,9 @@ Docker нужен для другого: по ТЗ сервис сдаётся �
 в контейнере делает Стас.
 
 `ml/baseline.py` и `ml/profile_data.py` написаны на чистой стандартной
-библиотеке и работают в любом случае.
+библиотеке и работают в любом случае. Сборке релиза (`ml/build_release.py`)
+нужны pandas, numpy и duckdb из `requirements-ml.txt`: под Smart App Control
+они поставились в отдельный venv и работают (проверено при сборке релиза).
 
 ---
 
@@ -428,9 +430,15 @@ docs/
   ML_BACKEND_CONTRACT.md      ОТМЕНЁН, оставлен как история
   frontend-tasks.md           задание фронтенд-команде: экраны, эндпойнты,
                               схемы ответов, сборка и Docker — всё в одном
+README_ML.md                  ML-часть; быстрый старт — в корневом README.md
+src/, configs/, release/      модель релиза, её параметры, собранный релиз
 ml/
-  baseline.py                 статистическая модель, генерирует submission.csv
-  profile_data.py             разведка датасета
+  build_release.py            СБОРКА СДАННОГО ПРОГНОЗА: --require-clean
+                              --data service/data (без --data ищет dataset/,
+                              его нет); сырые данные не нужны — проверено
+                              на свежем клоне, md5 совпал
+  baseline.py                 ранний базлайн 0.86923, в сдачу НЕ идёт, история
+  profile_data.py             разведка сырого датасета (нужен initial_data/)
 service/
   Dockerfile                  один контейнер: API (+ статика фронта)
   docker-compose.yml
@@ -443,10 +451,11 @@ service/
                               приём потока (ingest.py — это НЕ приём потока,
                               а чтение файлов прогноза на старте)
     api/                      REST-слой
-  data/                       labels и справочники (в git), submission.csv
-                              (кладёт Стас), network_events.json (не в git)
-  loadtest/loadtest.py        нагрузочный тест без зависимостей
-initial_data/                 датасет (в git не коммитить)
+  data/                       labels, справочники, submission.csv — всё в git
+  loadtest/                   loadtest.py — нагрузка; consistency.py —
+                              согласованность воркеров
+initial_data/                 сырой датасет (~10 ГБ, в git не коммитить);
+                              нужен только baseline.py и profile_data.py
 ```
 
 ---

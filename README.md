@@ -10,18 +10,7 @@
 организаторов 0.48. В зачёт идёт лучший результат за всё время.
 
 **Сданный релиз: 0.88987 — его отдаёт сервис и воспроизводит код
-в репозитории.** Прогноз `service/data/submission.csv` собран из
-закоммиченного кода:
-
-```bash
-python -m ml.build_release --require-clean --data service/data \
-    --output release/forecast_release.duckdb --submission release/submission.csv
-```
-
-Сборка проверяет md5 результата против прогноза, получившего скор, и
-записывает `score` в метаданные релиза только при совпадении: совпало,
-`score = 0.88987`, md5 `96b297e84e18ae66410fc6831aaa2f6b`,
-`code_git_sha = 3d48343`. Разница между числами — маршрут 5:
+в репозитории** (как — в «Быстром старте» ниже). Разница между числами — маршрут 5:
 в лучшем прогоне он построен cold start от аналога с даты запуска,
 в сданном релизе — нули на весь период. Оба числа выше порога 0.88, то есть
 максимальный балл за качество прогноза.
@@ -30,20 +19,59 @@ python -m ml.build_release --require-clean --data service/data \
 
 ## Быстрый старт
 
-### Прогноз
+### Воспроизвести сданный прогноз
+
+**Воспроизведение возможно прямо из этого репозитория, без внешнего
+датасета.** Labels и справочники лежат в `service/data/` и закоммичены;
+сырые `train.csv` и `test.csv` (около 10 ГБ) для пересборки не нужны.
+Проверено на свежем `git clone` без каталога с сырыми данными: md5
+собранного прогноза совпал с записанным.
+
+Зависимости сборки — в отдельном окружении, не в том, где сервис:
 
 ```bash
-# разведка датасета — что внутри, какие ловушки
-python ml/profile_data.py initial_data > report.txt
-
-# сезонный базлайн: валидация и генерация submission.csv
-python ml/baseline.py initial_data
-
-# перебор гипотез для сравнения на лидерборде
-python ml/baseline.py initial_data --sweep
+python -m venv .venv-ml
+.venv-ml/bin/pip install -r requirements-ml.txt        # Windows: .venv-ml\Scripts\pip
 ```
 
-Оба скрипта на чистой стандартной библиотеке — зависимостей нет.
+Сборка (ключ `--data service/data` обязателен: по умолчанию сборка ищет
+каталог `dataset/`, которого в репозитории нет). `--require-clean`
+не даёт собрать релиз из незакоммиченного кода; `.venv-ml/` уже
+в `.gitignore` и чистоте дерева не мешает:
+
+```bash
+.venv-ml/bin/python -m ml.build_release --require-clean --data service/data \
+    --output release/forecast_release.duckdb --submission release/submission.csv
+```
+
+**Проверка результата:**
+
+1. В выводе сборки — `score=0.88987 (scored forecast, md5 96b297e8…)`:
+   score записывается, только если md5 собранного прогноза совпал
+   с `scored_forecast.forecast_md5` в `configs/release.json`.
+2. md5 файла вручную:
+   ```bash
+   python -c "import hashlib;print(hashlib.md5(open('release/submission.csv','rb').read()).hexdigest())"
+   ```
+   должно быть `96b297e84e18ae66410fc6831aaa2f6b` — как в `configs/release.json`.
+3. Блок проверок из `docs/submission.md` (14 640 строк, без дублей, все
+   десять маршрутов, маршрут 5 нулевой). `service/data/submission.csv` —
+   тот же файл, что `release/submission.csv`.
+
+Тесты сборки: `.venv-ml/bin/python -m pytest tests -q` (с переменной
+`TRAM_DATASET=service/data`). Подробности — `README_ML.md`.
+
+### История: ранний базлайн
+
+`ml/baseline.py` — статистический базлайн ранней стадии. Дал 0.86923 на
+лидерборде, **в сдачу не идёт**, оставлен как история работы: журнал его
+экспериментов — `docs/model.md`. `ml/profile_data.py` — разведка датасета;
+оба скрипта требуют сырые данные хакатона (`initial_data/`, в git нет).
+
+```bash
+python ml/profile_data.py initial_data > report.txt   # разведка сырых данных
+python ml/baseline.py initial_data                    # ранний базлайн, 0.86923
+```
 
 ### Сервис
 
@@ -85,8 +113,8 @@ src/                    модель релиза: уровень × профи�
 ml/
   build_release.py      сборка релиза hackathon-v7 → submission.csv
   transfer_experiment.py  перетекание спроса при закрытиях
-  baseline.py           ранняя статистическая модель (0.86923, история)
-  profile_data.py       разведка датасета
+  baseline.py           ранний базлайн (0.86923), в сдачу не идёт, история
+  profile_data.py       разведка сырого датасета
 configs/, release/      параметры модели и релиза, контракт ML → backend
 data/external/          внешние источники с URL
 artifacts/, scripts/    ablation, бэктест, эксперименты
@@ -98,8 +126,10 @@ service/
   backend/app/
     pipeline/           приём → геопривязка → агрегация → коэффициенты
     api/                REST-слой
-  loadtest/             нагрузочный тест
-initial_data/           датасет, в git не коммитится
+  data/                 прогноз, labels, справочники — всё для сервиса и пересборки
+  loadtest/             нагрузочный тест и проверка согласованности воркеров
+initial_data/           сырые данные хакатона (~10 ГБ), в git нет; нужны только
+                        baseline.py и profile_data.py
 ```
 
 ---

@@ -23,11 +23,14 @@
 ## Цепочка модулей
 
 ```
-initial_data/                     исходный датасет
+initial_data/                     сырой датасет хакатона (~10 ГБ, в git нет)
+   └─ ml/profile_data.py          разведка сырых данных (ранняя стадия)
+
+service/data/labels/              labels организаторов — закоммичены
+data/external/                    внешние источники — закоммичены
    │
-   ├─ ml/profile_data.py          разведка: проверка качества данных
-   │
-   └─ ml/build_release.py         ПАКЕТНЫЙ КОНТУР (requirements-ml.txt)
+   └─ ml/build_release.py         ПАКЕТНЫЙ КОНТУР (requirements-ml.txt),
+         │                        --data service/data; сырые данные не нужны
          │  ├── src/data.py        чтение labels, полная сетка
          │  ├── src/pipeline.py    уровень × профиль × календарь,
          │  │                      световой день, режим ремонтов 7/50

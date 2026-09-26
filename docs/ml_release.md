@@ -18,10 +18,12 @@ ML отвечает за цепочку `данные → модель → forec
 ```bash
 pip install -r requirements-ml.txt
 
-# финальный релиз: только из закоммиченного кода, чтобы code_git_sha его воспроизводил
-python -m ml.build_release --require-clean --output release/forecast_release.duckdb --submission release/submission.csv
+# финальный релиз: только из закоммиченного кода, чтобы code_git_sha его воспроизводил;
+# labels лежат в репозитории, в service/data/labels (без --data сборка ищет dataset/, его нет)
+python -m ml.build_release --require-clean --data service/data --output release/forecast_release.duckdb --submission release/submission.csv
 
-# сборка в контейнере: данные в /data
+# сборка с данными в /data — в отдельном ML-окружении или контейнере: в образе сервиса
+# ML-зависимостей и кода модели нет намеренно (docs/architecture.md)
 python -m ml.build_release --data /data --output /data/forecast_release.duckdb
 
 # rebuild после ingest: почасовые агрегаты из runtime.duckdb продлевают историю
