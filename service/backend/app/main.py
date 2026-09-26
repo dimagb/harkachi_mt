@@ -1,0 +1,269 @@
+"""Точка входа сервиса.
+
+Цепочка модулей повторяет архитектуру решения:
+
+    pipeline/ingest.py    приём и нормализация данных
+    pipeline/geo.py       геопривязка
+    pipeline/aggregate.py агрегация прогноза по маршрутам, остановкам, времени
+    pipeline/adjust.py    корректирующие коэффициенты
+    api/                  REST-слой
+    static/               собранный фронтенд (если есть)
+
+Прогноз рассчитывается заранее пакетным пайплайном и лежит файлом. Сервис
+только читает готовые значения из памяти, поэтому отклик стабильно в единицах
+миллисекунд даже под нагрузкой.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+
+from app import config
+from app.api import export, factors, forecast, health, network, reference
+from app.api.deps import ApiError
+from app.pipeline import geo as geo_module
+from app.pipeline import network_events
+from app.pipeline.cache import cache as response_cache
+from app.pipeline.ingest import get_dataset
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("app")
+
+app = FastAPI(
+    title=config.APP_TITLE,
+    version=config.APP_VERSION,
+    description=(
+        "Сервис прогнозирования пассажиропотока на трамвайных маршрутах "
+        "Москвы. Прогноз считается пакетно, API отдаёт готовые агрегаты "
+        "с фильтрацией по маршруту, остановке, интервалу и горизонту."
+    ),
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+CACHEABLE_PREFIXES = (
+    "/api/forecast",
+    "/api/routes",
+    "/api/stops",
+    "/api/geometry",
+    "/api/factors",
+    "/api/scope",
+)
+
+
+@app.middleware("http")
+async def timing_and_cache(request: Request, call_next):
+    """Замер времени и кеш ответов.
+
+    Прогноз пересчитывается пакетно, поэтому в пределах жизни процесса ответ
+    на один и тот же запрос неизменен и кешируется целиком.
+    """
+    started = time.perf_counter()
+    path = request.url.path
+    cacheable = request.method == "GET" and path.startswith(CACHEABLE_PREFIXES)
+
+    if cacheable:
+        key = f"{path}?{request.url.query}"
+        cached = response_cache.get(key)
+        if cached is not None:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            return Response(
+                content=cached["body"],
+                status_code=cached["status"],
+                media_type=cached["media_type"],
+                headers={
+                    "X-Process-Time-ms": f"{elapsed_ms:.2f}",
+                    "X-Cache": "HIT",
+                },
+            )
+
+    generation = response_cache.generation
+    response = await call_next(request)
+
+    if cacheable and response.status_code == 200:
+        chunks = [chunk async for chunk in response.body_iterator]
+        body = b"".join(chunks)
+        response_cache.set(
+            f"{path}?{request.url.query}",
+            {
+                "body": body,
+                "status": response.status_code,
+                "media_type": response.media_type,
+            },
+            generation=generation,
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            media_type=response.media_type,
+            headers={
+                "X-Process-Time-ms": f"{elapsed_ms:.2f}",
+                "X-Cache": "MISS",
+            },
+        )
+
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    response.headers["X-Process-Time-ms"] = f"{elapsed_ms:.2f}"
+    return response
+
+
+@app.exception_handler(ApiError)
+async def api_error_handler(request: Request, exc: ApiError):
+    return JSONResponse(
+        status_code=exc.status,
+        content={"code": exc.code, "message": exc.message, "detail": exc.message},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Понятное сообщение вместо стектрейса — требование надёжности из ТЗ."""
+    log.exception("Необработанная ошибка на %s", request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "internal_error",
+            "detail": "Внутренняя ошибка сервиса. Подробности в логах.",
+            "path": request.url.path,
+        },
+    )
+
+
+app.include_router(health.router, prefix="/api")
+app.include_router(reference.router, prefix="/api")
+app.include_router(forecast.router, prefix="/api")
+app.include_router(export.router, prefix="/api")
+app.include_router(factors.router, prefix="/api")
+app.include_router(network.router, prefix="/api")
+
+
+@app.on_event("startup")
+def warm_up() -> None:
+    """Прогрев: данные грузятся на старте, а не при первом запросе."""
+    started = time.perf_counter()
+    dataset = get_dataset()
+    geo = geo_module.get_geo()
+    network_events.get_repository()
+    elapsed = time.perf_counter() - started
+    log.info(
+        "Готов за %.2f с: прогноз %d строк, история %d строк, "
+        "маршрутов с координатами %d",
+        elapsed,
+        len(dataset.forecast),
+        len(dataset.history),
+        len(geo.stops_by_route),
+    )
+    if not dataset.forecast:
+        log.warning(
+            "Файл прогноза пуст или не найден. Положите submission.csv в %s",
+            config.DATA_DIR,
+        )
+
+
+@app.get("/api", summary="Корень API")
+def api_root() -> dict:
+    return {
+        "service": config.APP_TITLE,
+        "version": config.APP_VERSION,
+        "docs": "/api/docs",
+        "endpoints": [
+            "GET  /api/health",
+            "GET  /api/meta",
+            "POST /api/reload",
+            "GET  /api/routes",
+            "GET  /api/stops?route=",
+            "GET  /api/geometry?route=",
+            "GET  /api/forecast?routes=&date_from=&date_to=&horizon=",
+            "GET  /api/forecast/routes",
+            "GET  /api/forecast/stops?route=",
+            "GET  /api/forecast/compare",
+            "GET  /api/export?format=csv|xlsx",
+            "GET  /api/export/submission",
+            "GET  /api/factors",
+            "GET  /api/scope",
+            "GET  /api/network-events",
+            "POST /api/network-events",
+            "DELETE /api/network-events/{id}",
+        ],
+    }
+
+
+# Статика фронтенда подключается, только если каталог существует.
+#
+# Важно: интерфейс это SPA с несколькими экранами (главный, аналитика,
+# вход). При клиентской маршрутизации браузер может запросить /analytics
+# напрямую — при обновлении страницы или переходе по ссылке. Такого файла
+# на диске нет, поэтому обычный StaticFiles вернул бы 404, хотя в режиме
+# разработки через Vite тот же путь работает. Поэтому любой неизвестный
+# путь, не начинающийся с /api, отдаёт index.html, а маршрутизацию
+# доигрывает фронтенд.
+if config.STATIC_DIR.exists():
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    STATIC_ROOT = config.STATIC_DIR.resolve()
+    INDEX_FILE = STATIC_ROOT / "index.html"
+
+    # Ассеты сборки отдаются напрямую, без прохода через catch-all.
+    for folder in ("assets", "static"):
+        sub = STATIC_ROOT / folder
+        if sub.is_dir():
+            app.mount(
+                f"/{folder}",
+                StaticFiles(directory=str(sub)),
+                name=f"static-{folder}",
+            )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa(full_path: str):
+        # Неизвестные пути API должны отдавать понятный JSON, а не страницу.
+        if full_path.startswith("api"):
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "not_found",
+                    "detail": f"Эндпойнт /{full_path} не существует. "
+                              "Список — GET /api, документация — /api/docs",
+                },
+            )
+        if full_path:
+            candidate = (STATIC_ROOT / full_path).resolve()
+            # Защита от выхода за пределы каталога статики.
+            if candidate.is_file() and candidate.is_relative_to(STATIC_ROOT):
+                return FileResponse(candidate)
+        if INDEX_FILE.is_file():
+            return FileResponse(INDEX_FILE)
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "not_found",
+                "detail": "Каталог статики есть, но index.html в нём нет",
+            },
+        )
+
+    log.info("Статика фронтенда подключена из %s", config.STATIC_DIR)
+else:
+
+    @app.get("/", summary="Заглушка вместо фронтенда")
+    def root() -> dict:
+        return {
+            "service": config.APP_TITLE,
+            "note": "Фронтенд не собран. API доступно по /api, документация — /api/docs",
+        }

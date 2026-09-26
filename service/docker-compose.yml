@@ -1,0 +1,42 @@
+# Запуск: docker compose up --build
+# После старта: http://localhost:8000/api/docs
+
+services:
+  forecast:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tram-forecast
+    ports:
+      - "8000:8000"
+    volumes:
+      # Данные подключаются снаружи: прогноз, история, справочники.
+      # Чтобы обновить прогноз, достаточно заменить submission.csv
+      # и дёрнуть POST /api/reload — перезапуск не нужен.
+      # Не :ro — сервис пишет сюда network_events.json (события сети),
+      # чтобы добавленное закрытие пережило перезапуск. Прогноз и
+      # справочники сервис только читает.
+      - ./data:/data
+    environment:
+      DATA_DIR: /data
+      FORECAST_FILE: submission.csv
+    restart: unless-stopped
+    # Лимиты из НФТ. Задаются дважды намеренно: ключи cpus/mem_limit
+    # действуют при обычном `docker compose up`, а блок deploy.resources —
+    # только в Swarm. Если оставить один deploy, лимиты молча не применятся
+    # и замеры окажутся сделаны на всей машине, то есть в README попадут
+    # цифры, которых на 2 vCPU не будет.
+    cpus: 2.0
+    mem_limit: 2g
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
