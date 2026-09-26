@@ -80,7 +80,8 @@
 >   при совпадении md5 прогноза), `cutoff_date`, `forecast_from`,
 >   `forecast_to`, `last_ingest_at`, `active_network_events`;
 > - ошибки раздела 40 — единый формат `{code, message}`;
-> - `network_impact_rules`: правило 17 → 11 × 1.1079 применяется.
+> - `network_impact_rules`: правило 17 → 11 × 1.1079 применяется только
+>   в выходные внутри дат закрытия (измерено на выходных).
 >
 > Не сделано — расхождения с текстом ниже:
 > - ответ `GET /api/forecast` не содержит полей `model_prediction` и

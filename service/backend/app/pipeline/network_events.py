@@ -27,7 +27,7 @@ import json
 import logging
 import threading
 from dataclasses import asdict, dataclass, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from app.pipeline.shared_state import atomic_write, file_lock, signature
@@ -119,6 +119,29 @@ class SecondaryRule:
     factor: float
     evidence: str
     caveat: str
+    # Дни недели, на которых правило измерено и только к которым применяется
+    # (0 — понедельник … 6 — воскресенье). Перенос на другие дни — отдельное
+    # измерение, не допущение.
+    weekdays: frozenset = frozenset(range(7))
+
+    def applies_on(self, day: date) -> bool:
+        return day.weekday() in self.weekdays
+
+    def active_days(self, closure: "NetworkEvent", start: date | None, end: date | None) -> bool:
+        """Есть ли в пересечении закрытия и запрошенного периода хотя бы один
+        день, когда правило действует. Открытое закрытие ограничено запросом."""
+        lo = max(d for d in (closure.valid_from, start) if d is not None)
+        hi_candidates = [d for d in (closure.valid_to, end) if d is not None]
+        if not hi_candidates:
+            return True  # открытое закрытие и открытый запрос — выходные будут
+        hi = min(hi_candidates)
+        day, checked = lo, 0
+        while day <= hi and checked < 7:
+            if self.applies_on(day):
+                return True
+            day += timedelta(days=1)
+            checked += 1
+        return False
 
     def describe(self, closure: "NetworkEvent") -> dict:
         return {
@@ -131,9 +154,10 @@ class SecondaryRule:
             "valid_from": closure.valid_from.isoformat(),
             "valid_to": closure.valid_to.isoformat() if closure.valid_to else None,
             "label": (
-                f"Маршрут {self.target_route} ×{self.factor:.3f}: перетекание "
+                f"Маршрут {self.target_route} ×{self.factor:.3f} в выходные: перетекание "
                 f"пассажиров при закрытии маршрута {self.source_route}"
             ),
+            "applies_on": "только суббота и воскресенье внутри дат закрытия",
             "evidence": self.evidence,
             "caveat": self.caveat,
         }
@@ -150,9 +174,13 @@ SECONDARY_RULES = (
             "без любого одного дня 1.084–1.131"
         ),
         caveat=(
-            "Измерено на 4 выходных днях апреля 2025; маршрут 17 тогда возил "
-            "1–13% обычного объёма, а не ноль; перенос на будни — экстраполяция"
+            "Измерено на 4 выходных днях апреля 2025, поэтому применяется только "
+            "к выходным; перенос на будни потребует отдельного измерения. "
+            "1.108 — консервативная нижняя оценка: маршрут 17 тогда возил 1–13% "
+            "обычного объёма, а не ноль, и при полном закрытии перетекание было "
+            "бы не меньше"
         ),
+        weekdays=frozenset({5, 6}),
     ),
 )
 
@@ -230,7 +258,8 @@ class NetworkEffect:
             cached = tuple(
                 (rule, active)
                 for rule, closures in secondary
-                if (active := tuple(c for c in closures if c.covers_day(day)))
+                if rule.applies_on(day)
+                and (active := tuple(c for c in closures if c.covers_day(day)))
             )
             self._secondary_day[key] = cached
         return cached
@@ -250,7 +279,9 @@ class NetworkEffect:
                 continue
             for rule, closures in pairs:
                 for closure in closures:
-                    if closure.overlaps(start, end):
+                    # Запись — только если в пересечении есть день, когда
+                    # правило действует: закрытие 17 на одни будни 11 не меняет.
+                    if closure.overlaps(start, end) and rule.active_days(closure, start, end):
                         result.append(rule.describe(closure))
         return result
 
