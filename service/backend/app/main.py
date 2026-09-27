@@ -55,14 +55,6 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 # PID воркера в заголовке X-Worker: видно, какой процесс ответил. Нужно,
 # чтобы проверять согласованность состояния между воркерами.
 WORKER_ID = str(os.getpid())
@@ -116,8 +108,8 @@ async def timing_and_cache(request: Request, call_next):
             return Response(
                 content=cached["body"],
                 status_code=cached["status"],
-                media_type=cached["media_type"],
                 headers={
+                    **cached["headers"],
                     "X-Process-Time-ms": f"{elapsed_ms:.2f}",
                     "X-Cache": "HIT",
                     "X-Worker": WORKER_ID,
@@ -130,12 +122,20 @@ async def timing_and_cache(request: Request, call_next):
     if cacheable and response.status_code == 200:
         chunks = [chunk async for chunk in response.body_iterator]
         body = b"".join(chunks)
+        # Заголовки берём из response.headers целиком: у ответа call_next
+        # поле media_type равно None, а Content-Type лежит только в заголовках.
+        # Content-Length Response посчитает заново по телу.
+        headers = {
+            name: value
+            for name, value in response.headers.items()
+            if name.lower() != "content-length"
+        }
         response_cache.set(
             key,
             {
                 "body": body,
                 "status": response.status_code,
-                "media_type": response.media_type,
+                "headers": headers,
             },
             generation=generation,
         )
@@ -143,8 +143,8 @@ async def timing_and_cache(request: Request, call_next):
         return Response(
             content=body,
             status_code=response.status_code,
-            media_type=response.media_type,
             headers={
+                **headers,
                 "X-Process-Time-ms": f"{elapsed_ms:.2f}",
                 "X-Cache": "MISS",
                 "X-Worker": WORKER_ID,
@@ -155,6 +155,18 @@ async def timing_and_cache(request: Request, call_next):
     response.headers["X-Process-Time-ms"] = f"{elapsed_ms:.2f}"
     response.headers["X-Worker"] = WORKER_ID
     return response
+
+
+# CORS подключается ПОСЛЕ middleware кеша и поэтому оборачивает его снаружи:
+# заголовки Access-Control-* ставятся на каждый ответ, включая отданные
+# из кеша, и зависят от Origin текущего запроса, а не того, что попал в кеш.
+# Если подключить раньше, кеш пересобирает ответ после CORS и теряет их.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(ApiError)
