@@ -473,7 +473,7 @@ function ManualHourFilter({ filters, setFilters }) {
   };
   return <div className="manual-hour-filter">
     <div className="manual-hour-fields">
-      {[["from", "С часа", ":00"], ["to", "По час", ":59"]].map(([key, label, suffix]) =>
+      {[["from", "С часа", ":00"], ["to", "По час", ":00"]].map(([key, label, suffix]) =>
         <div className="manual-hour-field" key={key}>
           <span>{label}</span>
           <div><input aria-label={label} inputMode="numeric" autoComplete="off" maxLength={2}
