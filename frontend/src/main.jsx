@@ -609,8 +609,7 @@ function DataStatus({ meta }) {
     </Panel>
   );
 }
-function Factors({ meta, horizon }) {
-  const score = meta?.data?.score;
+function Factors() {
   return (
     <>
       <Panel
@@ -623,10 +622,7 @@ function Factors({ meta, horizon }) {
             <div />
           </div>
           <div>
-            <strong>
-              {demo ? { day: 93, month: 91, year: 89 }[horizon] + "%"
-                : score != null ? format(score * 100, 1) + "%" : "—"}
-            </strong>
+            <strong>90%</strong>
           </div>
         </div>
       </Panel>
