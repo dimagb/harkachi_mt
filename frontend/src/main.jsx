@@ -1168,6 +1168,7 @@ function Workspace() {
       seasonPct: 0, manualPct: 0,
     }),
     [stopRoute, setStopRoute] = useState(null),
+    [selectedStopId, setSelectedStopId] = useState(""),
     [admin, setAdmin] = useState(false),
     [toast, setToast] = useState(""),
     [revision, setRevision] = useState(0),
@@ -1342,6 +1343,7 @@ function Workspace() {
   useEffect(() => {
     if (filters.routes.length) setSelectedRoute(filters.routes[0]);
   }, [filters.routes.join(",")]);
+  useEffect(() => setSelectedStopId(""), [selectedRoute]);
   function reset() {
     setFilters({
       horizon: "day",
@@ -1356,6 +1358,7 @@ function Workspace() {
       eventMode: "auto", eventCode: "NONE", eventPct: 0,
       seasonPct: 0, manualPct: 0,
     });
+    setSelectedStopId("");
   }
   return (
     <div className={`app-shell ${analytics ? "is-analytics" : "is-dispatch"}`}>
@@ -1424,9 +1427,8 @@ function Workspace() {
                 <label>Остановка</label>
                 <select
                   aria-label="Остановка"
-                  onChange={(e) => {
-                    if (e.target.value) setStopRoute(selectedRoute);
-                  }}
+                  value={selectedStopId}
+                  onChange={(e) => setSelectedStopId(e.target.value)}
                 >
                   <option value="">Выберите остановку…</option>
                   {asList(stops.data, "stops").map((s) => (
@@ -1547,6 +1549,7 @@ function Workspace() {
                 selectedRoutes={filters.routes}
                 loadBandFilter={statusFilter}
                 stops={asList(stops.data, "stops")}
+                selectedStop={asList(stops.data, "stops").find((stop) => stop.stop_id === selectedStopId)}
                 routeLoads={routeLoads}
                 routeLoadsLoading={hourlyLoadNeeded ? fullDayLoad.loading : forecast.loading}
                 onRoute={openRoute}

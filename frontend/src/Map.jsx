@@ -17,6 +17,7 @@ const loadColor = [
 export default function TramMap({
   geometry,
   stops = [],
+  selectedStop = null,
   routeLoads = {},
   routeLoadsLoading = false,
   loadBandFilter = "all",
@@ -42,6 +43,12 @@ export default function TramMap({
   }, [loadBandFilter]);
   const matchesRoute = (route) =>
     routeMatchesLoad(route, selectedRoutes, loadBandFilter, routeLoads);
+  useEffect(() => {
+    if (!ready || !selectedStop || !Number.isFinite(selectedStop.lon) ||
+      !Number.isFinite(selectedStop.lat)) return;
+    map.current?.flyTo({ center: [selectedStop.lon, selectedStop.lat],
+      zoom: Math.max(map.current.getZoom(), 13) });
+  }, [ready, selectedStop?.stop_id]);
   useEffect(() => {
     let m;
     try {
@@ -230,6 +237,25 @@ export default function TramMap({
         },
       });
     }
+    const selectedStopData = {
+      type: "FeatureCollection",
+      features: selectedStop && Number.isFinite(selectedStop.lat) && Number.isFinite(selectedStop.lon)
+        ? [{ type: "Feature", geometry: { type: "Point",
+          coordinates: [selectedStop.lon, selectedStop.lat] },
+          properties: { name: selectedStop.name } }] : [],
+    };
+    if (m.getSource("selected-stop")) m.getSource("selected-stop").setData(selectedStopData);
+    else {
+      m.addSource("selected-stop", { type: "geojson", data: selectedStopData });
+      m.addLayer({ id: "selected-stop-marker", type: "circle", source: "selected-stop",
+        paint: { "circle-radius": 8, "circle-color": "#f2fbff",
+          "circle-stroke-color": "#008dff", "circle-stroke-width": 4 } });
+      m.addLayer({ id: "selected-stop-label", type: "symbol", source: "selected-stop",
+        layout: { "text-field": ["get", "name"], "text-size": 13,
+          "text-offset": [0, -1.8], "text-anchor": "bottom" },
+        paint: { "text-color": "#ffffff", "text-halo-color": "#00111d",
+          "text-halo-width": 3 } });
+    }
     const segments = focusedRoute && showStopSegments
       ? data.features.flatMap((feature) =>
           String(feature.properties.route) === focusedRoute
@@ -301,7 +327,7 @@ export default function TramMap({
     m.setPaintProperty("tram-glow", "line-color", load ? loadColor : "#0095ff");
     m.setPaintProperty("tram-focus", "line-color", load ? loadColor : "#0095ff");
     m.setPaintProperty("tram-route-badges", "circle-stroke-color", load ? loadColor : "#0095ff");
-  }, [ready, geometry, stops, routeLoads, showRoutes, showStops, showStopSegments,
+  }, [ready, geometry, stops, selectedStop, routeLoads, showRoutes, showStops, showStopSegments,
     focusedRoute, load, selectedRoutes.join(","), loadBandFilter]);
   useEffect(() => {
     if (focusedRoute && !matchesRoute(focusedRoute)) setFocusedRoute(null);
