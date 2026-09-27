@@ -839,6 +839,29 @@ small {
   border-radius: 5px;
   line-height: 1.6;
 }
+.map-route-key {
+  position: absolute;
+  top: 51px;
+  left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-width: min(300px, calc(100% - 20px));
+}
+.map-route-key button {
+  min-width: 31px;
+  height: 29px;
+  padding: 2px 6px;
+  border: 2px solid;
+  border-radius: 5px;
+  background: #001b2be8;
+  color: #f2f8fc;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 2px 8px #00111daa;
+}
+.map-route-key button:hover,
+.map-route-key button[aria-pressed="true"] { background: #16465d; box-shadow: 0 0 0 2px #e6f5ff88; }
 .map-load-legend {
   position: absolute;
   left: 10px;
@@ -1884,6 +1907,7 @@ small {
   .map-toggles label {
     font-size: 9px;
   }
+  .map-route-key { top: 98px; }
   .map-notice {
     top: 87px;
     font-size: 10px;

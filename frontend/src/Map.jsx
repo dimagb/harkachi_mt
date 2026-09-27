@@ -29,7 +29,9 @@ export default function TramMap({
     [showRoutes, setShowRoutes] = useState(true),
     [showStops, setShowStops] = useState(true),
     [load, setLoad] = useState(true),
-    [layers, setLayers] = useState(false);
+    [layers, setLayers] = useState(false),
+    [hoveredRoute, setHoveredRoute] = useState(null),
+    [focusedRoute, setFocusedRoute] = useState(null);
   onClick.current = onRoute;
   useEffect(() => {
     let m;
@@ -83,15 +85,19 @@ export default function TramMap({
           "Не удалось загрузить часть карты OpenFreeMap. Проверьте подключение к сети.",
         ),
       );
-      m.on("click", "tram-lines", (e) =>
-        onClick.current(String(e.features[0].properties.route)),
-      );
-      m.on(
-        "mouseenter",
-        "tram-lines",
-        () => (m.getCanvas().style.cursor = "pointer"),
-      );
-      m.on("mouseleave", "tram-lines", () => (m.getCanvas().style.cursor = ""));
+      m.on("click", "tram-lines", (e) => {
+        const route = String(e.features[0].properties.route);
+        setFocusedRoute(route);
+        onClick.current(route);
+      });
+      m.on("mousemove", "tram-lines", (e) => {
+        m.getCanvas().style.cursor = "pointer";
+        setHoveredRoute(String(e.features[0].properties.route));
+      });
+      m.on("mouseleave", "tram-lines", () => {
+        m.getCanvas().style.cursor = "";
+        setHoveredRoute(null);
+      });
     } catch {
       setError("Браузер не поддерживает интерактивную карту WebGL.");
     }
@@ -103,6 +109,10 @@ export default function TramMap({
   useEffect(() => {
     const m = map.current;
     if (!ready || !m) return;
+    const visibleRoutes = [...new Set((geometry?.features || [])
+      .filter((f) => !selectedRoutes.length || selectedRoutes.includes(String(f.properties?.route)))
+      .map((f) => Number(f.properties?.route)))]
+      .filter(Number.isFinite).sort((a, b) => a - b);
     const data = {
       type: "FeatureCollection",
       // Пустой выбор — все маршруты. У маршрута две features (по одной на
@@ -115,6 +125,9 @@ export default function TramMap({
         properties: {
           ...f.properties,
           loadBand: routeLoads[String(f.properties.route)]?.band || "unknown",
+          laneOffset: (visibleRoutes.indexOf(Number(f.properties.route)) -
+            (visibleRoutes.length - 1) / 2) * 6 *
+            (Number(f.properties.direction) === 1 ? -1 : 1),
         },
       })),
     };
@@ -132,12 +145,45 @@ export default function TramMap({
         },
       });
       m.addLayer({
+        id: "tram-casing",
+        type: "line",
+        source: "trams",
+        paint: {
+          "line-color": "#00111d",
+          "line-width": 8,
+          "line-offset": ["get", "laneOffset"],
+        },
+      });
+      m.addLayer({
         id: "tram-lines",
         type: "line",
         source: "trams",
         paint: {
           "line-color": loadColor,
           "line-width": 4,
+          "line-offset": ["get", "laneOffset"],
+        },
+      });
+      m.addLayer({
+        id: "tram-focus-casing",
+        type: "line",
+        source: "trams",
+        filter: ["==", ["get", "route"], -1],
+        paint: {
+          "line-color": "#00111d",
+          "line-width": 12,
+          "line-offset": ["get", "laneOffset"],
+        },
+      });
+      m.addLayer({
+        id: "tram-focus",
+        type: "line",
+        source: "trams",
+        filter: ["==", ["get", "route"], -1],
+        paint: {
+          "line-color": loadColor,
+          "line-width": 7,
+          "line-offset": ["get", "laneOffset"],
         },
       });
     }
@@ -166,7 +212,26 @@ export default function TramMap({
         },
       });
     }
-    for (const name of ["tram-lines", "tram-glow"])
+    if (!m.getLayer("tram-labels")) m.addLayer({
+      id: "tram-labels",
+      type: "symbol",
+      source: "trams",
+      filter: ["==", ["get", "direction"], 0],
+      layout: {
+        "symbol-placement": "line",
+        "symbol-spacing": 220,
+        "text-field": ["concat", "№", ["to-string", ["get", "route"]]],
+        "text-size": 14,
+        "text-allow-overlap": false,
+      },
+      paint: {
+        "text-color": "#ffffff",
+        "text-halo-color": "#00111d",
+        "text-halo-width": 3,
+      },
+    });
+    for (const name of ["tram-lines", "tram-glow", "tram-casing",
+      "tram-focus", "tram-focus-casing", "tram-labels"])
       m.setLayoutProperty(name, "visibility", showRoutes ? "visible" : "none");
     m.setLayoutProperty(
       "tram-stops",
@@ -181,7 +246,23 @@ export default function TramMap({
         : "#0095ff",
     );
     m.setPaintProperty("tram-glow", "line-color", load ? loadColor : "#0095ff");
+    m.setPaintProperty("tram-focus", "line-color", load ? loadColor : "#0095ff");
   }, [ready, geometry, stops, routeLoads, showRoutes, showStops, load, selectedRoutes.join(",")]);
+  useEffect(() => {
+    const m = map.current;
+    if (!ready || !m?.getLayer("tram-focus")) return;
+    const active = hoveredRoute || focusedRoute;
+    const filter = ["==", ["get", "route"], active ? Number(active) : -1];
+    m.setFilter("tram-focus", filter);
+    m.setFilter("tram-focus-casing", filter);
+    m.setPaintProperty("tram-lines", "line-opacity", active ? 0.4 : 1);
+    m.setPaintProperty("tram-casing", "line-opacity", active ? 0.5 : 1);
+    m.setPaintProperty("tram-glow", "line-opacity", active ? 0.04 : 0.12);
+  }, [ready, hoveredRoute, focusedRoute]);
+  const routeNumbers = [...new Set((geometry?.features || [])
+    .map((f) => Number(f.properties?.route)))]
+    .filter(Number.isFinite).sort((a, b) => a - b)
+    .filter((route) => !selectedRoutes.length || selectedRoutes.includes(String(route)));
   return (
     <section className="map panel">
       <div ref={el} className="map-canvas" />
@@ -220,6 +301,17 @@ export default function TramMap({
           </button>
         </div>
       </div>
+      {showRoutes && routeNumbers.length > 0 && <div className="map-route-key" aria-label="Маршруты на карте">
+        {routeNumbers.map((route) => <button key={route} type="button"
+          aria-label={`Выделить маршрут ${route}`}
+          aria-pressed={focusedRoute === String(route)}
+          onClick={() => setFocusedRoute((current) => current === String(route) ? null : String(route))}
+          onMouseEnter={() => setHoveredRoute(String(route))}
+          onMouseLeave={() => setHoveredRoute(null)}
+          style={{ borderColor: load ? LOAD_COLORS[routeLoads[String(route)]?.band || "unknown"] : "#0095ff" }}>
+          {route}
+        </button>)}
+      </div>}
       {layers && (
         <div className="map-layer-popover">
           OpenFreeMap · Москва
