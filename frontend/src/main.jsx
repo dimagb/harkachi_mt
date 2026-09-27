@@ -620,7 +620,7 @@ function Factors({ meta, horizon }) {
     <>
       <Panel
         title="Точность прогноза"
-        info="Оценка релиза на лидерборде: 1 − WAPE по всем часам, маршрутам и дням 1 ноября — 31 декабря 2025. Одна цифра на весь прогноз, от горизонта не зависит."
+        info="Показатель точности прогноза за доступный период."
         className="accuracy"
       >
         <div className="accuracy-body">
@@ -632,7 +632,7 @@ function Factors({ meta, horizon }) {
               {demo ? { day: 93, month: 91, year: 89 }[horizon] + "%"
                 : score != null ? format(score * 100, 1) + "%" : "—"}
             </strong>
-            <p>Точность прогноза{score != null && !demo ? " · 1 − WAPE, лидерборд" : ""}</p>
+            <p>Точность прогноза</p>
           </div>
         </div>
       </Panel>
