@@ -1,7 +1,9 @@
 # Прогноз пассажиропотока трамваев Москвы — ML
 
-Почасовой прогноз посадок на 10 трамвайных маршрутах. ML собирает read-only релиз
-`forecast_release.duckdb`, backend держит его в памяти и считает what-if сценарии поверх `model_prediction`.
+Почасовой прогноз посадок на 10 трамвайных маршрутах. Один расчёт `ml.build_release` даёт два артефакта
+с одними и теми же значениями: read-only релиз `forecast_release.duckdb` для ML-контура и `submission.csv`
+в формате сдачи, который читает сервис. Поэтому расхождений между лидербордом и дашбордом быть не может;
+what-if сценарии сервис считает поверх этих значений (`model_prediction`).
 
 - Материалы для защиты ML-части: [docs/defense_ml.md](docs/defense_ml.md)
 - Контракт ML → backend: [release/CONTRACT.md](release/CONTRACT.md)

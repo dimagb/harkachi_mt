@@ -21,8 +21,11 @@ what_if (обоснованные значения ползунков), none.
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter
 
+from app import config
 from app.pipeline.network_events import SECONDARY_RULES
 
 router = APIRouter(tags=["данные и применимость"])
@@ -268,7 +271,7 @@ MODEL_SCOPE = {
         ),
     },
     "valid_for": {
-        "routes": [1, 7, 11, 12, 17, 25, 26, 28, 50],
+        "routes": [1, 5, 7, 11, 12, 17, 25, 26, 28, 50],
         "horizon_days": 61,
         "period": ["2025-11-01", "2025-12-31"],
         "training_period": ["2025-01-01", "2025-10-31"],
@@ -280,6 +283,11 @@ MODEL_SCOPE = {
         "но в сданную версию не взят.",
         "Остановочная детализация оценочная: привязки валидаций к остановкам "
         "в данных нет, place_id — это код депо.",
+        "Участка как отдельной сущности нет. ТЗ перечисляет маршрут, остановку, "
+        "участок и интервал; участок покрывается разбивкой по остановкам: это "
+        "последовательность соседних остановок одного направления (по sequence "
+        "в /api/forecast/stops), и его оценка — сумма value этих остановок, "
+        "с той же оговоркой об оценочности.",
         "Координаты остановок есть только для маршрутов 1, 5, 7, 11, 12.",
         "История покрывает 10 месяцев одного года, поэтому годовая "
         "сезонность и межгодовое сравнение недоступны.",
@@ -297,6 +305,10 @@ MODEL_SCOPE = {
         "измерено на выходных, перенос на будни требует отдельного измерения.",
         "Погода в прогноз не входит: в холодный сезон её эффект не значим; "
         "измеренные коэффициенты тёплого сезона доступны как what-if.",
+        "Цикл «приём потока → пересборка» не замкнут. Сервис пишет агрегаты "
+        "принятых валидаций в JSON, а ml.build_release --runtime ожидает таблицу "
+        "hourly_aggregates в runtime.duckdb; конвертера из JSON в DuckDB нет. "
+        "Принятый поток на прогноз пока не влияет.",
     ],
     "adaptation": [
         "Перенос на новые маршруты: нужна история не менее 8 недель для "
@@ -316,8 +328,25 @@ def factors() -> dict:
     by_status: dict = {}
     for source in EXTERNAL_SOURCES:
         by_status[source["status"]] = by_status.get(source["status"], 0) + 1
+    try:
+        catalog = json.loads(config.FACTOR_OPTIONS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        catalog = {"seasons": {}, "options": []}
     return {
         "sources": EXTERNAL_SOURCES,
+        "seasons": catalog.get("seasons", {}),
+        "options": [
+            {
+                **option,
+                "status": (
+                    "confirmed" if option.get("confirmed") else
+                    "manual_scenario" if option.get("source") == "manual_scenario" else
+                    "measured_not_confirmed" if option.get("is_measured") else
+                    "neutral"
+                ),
+            }
+            for option in catalog.get("options", [])
+        ],
         "count": len(EXTERNAL_SOURCES),
         "by_status": by_status,
         "network_impact_rules": NETWORK_IMPACT_RULES,

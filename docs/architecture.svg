@@ -43,7 +43,7 @@
   <!-- КОНТЕЙНЕР -->
   <rect x="580" y="130" width="800" height="690" rx="22" fill="#E7F5FF" stroke="#1864AB" stroke-width="5"/>
   <text x="980" y="178" text-anchor="middle" font-size="28" font-weight="700" fill="#1864AB" letter-spacing="1">ОДИН DOCKER-КОНТЕЙНЕР</text>
-  <text x="980" y="212" text-anchor="middle" font-size="22" fill="#1864AB">1 воркер uvicorn · 2 vCPU / 2 ГБ</text>
+  <text x="980" y="212" text-anchor="middle" font-size="22" fill="#1864AB">2 воркера uvicorn · 2 vCPU / 2 ГБ</text>
 
   <rect x="610" y="250" width="340" height="130" rx="14" fill="#FFFFFF" stroke="#1864AB" stroke-width="3"/>
   <text x="780" y="306" text-anchor="middle" font-size="30" font-weight="700" fill="#212529">Статика фронта</text>
