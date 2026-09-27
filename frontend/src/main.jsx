@@ -1344,6 +1344,8 @@ function Workspace() {
                 </select>
                 <label>Временной интервал</label>
                 <HourFilter filters={filters} setFilters={setFilters} />
+                <label>Дата</label>
+                <DateFilter filters={filters} setFilters={setFilters} />
                 <label>Статус</label>
                 <select
                   aria-label="Статус"
@@ -1454,11 +1456,6 @@ function Workspace() {
               <Panel
                 title="Загруженность / Прогноз"
                 className="dispatch-chart"
-                actions={
-                  <div className="chart-controls">
-                    <DateFilter filters={filters} setFilters={setFilters} />
-                  </div>
-                }
               >
                 <ResourceError resource={previewForView} />
                 <NetworkWarnings events={events} />
