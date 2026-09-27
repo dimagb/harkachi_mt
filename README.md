@@ -81,10 +81,17 @@ docker compose up --build   # данные уже в service/data/, подкла
 # http://localhost:8000/api/docs
 ```
 
-Интерфейс на http://localhost:8000 появляется, если перед сборкой положить
-фронтенд в `service/static/` — например, запасной дашборд:
-`cp frontend-fallback/index.html service/static/` (подробно —
-`service/README.md`).
+Интерфейс — http://localhost:8000: вход, диспетчерская, аналитика.
+Собранный фронтенд уже лежит в `service/static/` и попадает в образ,
+npm и сеть при сборке не нужны. Вход без пароля: достаточно нажать
+«Войти»; форма изменений сети — в роли «Администратор».
+
+Пересобрать фронтенд из исходников (`frontend/`, нужен Node.js):
+
+```bash
+cd frontend && npm ci && npm test && npm run build
+# затем заменить содержимое service/static/ на frontend/dist/ (.gitkeep оставить)
+```
 
 ### Нагрузочный тест
 
@@ -128,7 +135,8 @@ configs/, release/      параметры модели и релиза, кон�
 data/external/          внешние источники с URL
 artifacts/, scripts/    ablation, бэктест, эксперименты
 tests/                  тесты пайплайна и релиза
-frontend-fallback/      запасной дашборд одним файлом
+frontend/               интерфейс: React + Vite, сборка — в service/static/
+frontend-fallback/      запасной дашборд одним файлом (резерв, в образ не входит)
 service/
   Dockerfile            один контейнер, два воркера: API и статика
   docker-compose.yml

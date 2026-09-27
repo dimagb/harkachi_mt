@@ -62,8 +62,8 @@ service/backend/app/              ОНЛАЙН-КОНТУР
    └─ api/factors.py              внешние источники, область применимости
          │
          ▼
-service/static/                   фронтенд: сборка фронт-команды или запасной
-                                  frontend-fallback/index.html
+service/static/                   фронтенд: сборка frontend/ (React + Vite),
+                                  хранится в git; резерв — frontend-fallback/
 ```
 
 Разделение соответствует требованию рубрики: приём и нормализация данных →

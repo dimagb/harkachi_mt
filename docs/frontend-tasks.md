@@ -602,9 +602,9 @@ npm run build          # получится frontend/dist/
 cp -r dist/* ../service/static/
 ```
 
-В git каталог `service/static/` пустой (только `.gitkeep`) — сервис отдаёт
-только API. Появился `index.html` — начинает отдавать интерфейс на `/`,
-API остаётся на `/api`. Текущий `service/Dockerfile` копирует
+Сборка хранится в git в `service/static/` (перед копированием старое
+содержимое убрать, `.gitkeep` оставить). Есть `index.html` — сервис отдаёт
+интерфейс на `/`, API остаётся на `/api`. `service/Dockerfile` копирует
 `service/static/` в образ, так что после `cp` достаточно пересобрать
 образ.
 
