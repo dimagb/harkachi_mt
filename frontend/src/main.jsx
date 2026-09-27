@@ -870,7 +870,7 @@ function Recommendations({ ranking, forecast, onAction }) {
   const rs = ranking.filter((r) => r.total > 0).slice(0, 2);
   return (
     <Panel
-      title="Рекомендации ИИ"
+      title="Рекомендации по выпуску"
       className="recommendations"
       actions={<span className="count">{rs.length}</span>}
     >
