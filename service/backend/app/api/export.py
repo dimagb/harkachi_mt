@@ -28,7 +28,7 @@ HEADER = ["route", "date", "hour", "prediction"]
 
 
 def _collect(routes, date_from, date_to, hour_from, hour_to, adjustment,
-             network=None):
+             network=None, rounded=True):
     dataset = get_dataset()
     rows = []
     for row, value in iter_rows(
@@ -41,7 +41,7 @@ def _collect(routes, date_from, date_to, hour_from, hour_to, adjustment,
         adjustment=adjustment,
         network=network,
     ):
-        rows.append((row[0], row[5], row[2], round(value)))
+        rows.append((row[0], row[5], row[2], round(value) if rounded else value))
     rows.sort(key=lambda item: (item[0], item[1], item[2]))
     return rows
 
@@ -133,8 +133,9 @@ def export_submission():
     """Полная сетка 10 маршрутов × 61 день × 24 часа без поправок.
 
     И без событий сети: это model_prediction в формате лидерборда.
+    Без округления: целые дали бы другой файл и другой скор, чем 0.88987.
     """
-    rows = _collect(None, None, None, 0, 23, None)
+    rows = _collect(None, None, None, 0, 23, None, rounded=False)
     buffer = io.StringIO()
     writer = csv.writer(buffer, delimiter=";", lineterminator="\n")
     writer.writerow(HEADER)
