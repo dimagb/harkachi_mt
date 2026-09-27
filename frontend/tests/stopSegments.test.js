@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { stopSegments } from "../src/stopSegments.js";
 
 test("colors consecutive supplied stop segments without inventing the reverse direction", () => {
-  const geometry = { properties: { route: 11, direction: 0, laneOffset: 6 },
+  const geometry = { properties: { route: 11, direction: 0 },
     geometry: { coordinates: [[1, 1], [2, 2], [3, 3]] } };
   const stops = [
     { route: 11, direction: 0, sequence: 1, lon: 1, lat: 1, share: 0.01, name: "A" },

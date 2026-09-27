@@ -115,7 +115,7 @@ export default function TramMap({
         m.getCanvas().style.cursor = "";
         setHoveredRoute(null);
       };
-      for (const layer of ["tram-lines", "tram-segment-lines",
+      for (const layer of ["tram-lines", "tram-return-lines", "tram-segment-lines",
         "tram-route-badges", "tram-route-badge-text"]) {
         m.on("click", layer, selectRoute);
         m.on("mousemove", layer, hoverRoute);
@@ -132,12 +132,6 @@ export default function TramMap({
   useEffect(() => {
     const m = map.current;
     if (!ready || !m) return;
-    const visibleRoutes = [...new Set((geometry?.features || [])
-      .filter((f) => matchesRoute(f.properties?.route))
-      .map((f) => Number(f.properties?.route)))]
-      .filter(Number.isFinite).sort((a, b) => a - b);
-    const alignedRoute = focusedRoute ||
-      (showStops && stops[0] ? String(stops[0].route) : null);
     const data = {
       type: "FeatureCollection",
       // Пустой выбор — все маршруты. У маршрута две features (по одной на
@@ -149,10 +143,6 @@ export default function TramMap({
         properties: {
           ...f.properties,
           loadBand: routeLoads[String(f.properties.route)]?.band || "unknown",
-          laneOffset: alignedRoute === String(f.properties.route) ? 0 :
-            (visibleRoutes.indexOf(Number(f.properties.route)) -
-              (visibleRoutes.length - 1) / 2) * 6 *
-              (Number(f.properties.direction) === 1 ? -1 : 1),
         },
       })),
     };
@@ -160,56 +150,38 @@ export default function TramMap({
     else {
       m.addSource("trams", { type: "geojson", data });
       m.addLayer({
-        id: "tram-glow",
-        type: "line",
-        source: "trams",
-        paint: {
-          "line-color": loadColor,
-          "line-width": 9,
-          "line-opacity": 0.12,
-        },
-      });
-      m.addLayer({
         id: "tram-casing",
         type: "line",
         source: "trams",
+        filter: ["==", ["get", "direction"], 0],
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": "#00111d",
-          "line-width": 8,
-          "line-offset": ["get", "laneOffset"],
+          "line-width": 7,
         },
       });
       m.addLayer({
         id: "tram-lines",
         type: "line",
         source: "trams",
+        filter: ["==", ["get", "direction"], 0],
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": loadColor,
           "line-width": 4,
-          "line-offset": ["get", "laneOffset"],
         },
       });
       m.addLayer({
-        id: "tram-focus-casing",
-        type: "line",
-        source: "trams",
-        filter: ["==", ["get", "route"], -1],
-        paint: {
-          "line-color": "#00111d",
-          "line-width": 12,
-          "line-offset": ["get", "laneOffset"],
-        },
+        id: "tram-return-casing", type: "line", source: "trams", minzoom: 14,
+        filter: ["==", ["get", "direction"], 1],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#00111d", "line-width": 5 },
       });
       m.addLayer({
-        id: "tram-focus",
-        type: "line",
-        source: "trams",
-        filter: ["==", ["get", "route"], -1],
-        paint: {
-          "line-color": loadColor,
-          "line-width": 7,
-          "line-offset": ["get", "laneOffset"],
-        },
+        id: "tram-return-lines", type: "line", source: "trams", minzoom: 14,
+        filter: ["==", ["get", "direction"], 1],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": loadColor, "line-width": 2.5 },
       });
     }
     const sd = {
@@ -266,14 +238,9 @@ export default function TramMap({
     else {
       m.addSource("tram-segments", { type: "geojson", data: segmentData });
       m.addLayer({
-        id: "tram-segment-casing", type: "line", source: "tram-segments",
-        paint: { "line-color": "#00111d", "line-width": 11,
-          "line-offset": ["get", "laneOffset"] },
-      });
-      m.addLayer({
         id: "tram-segment-lines", type: "line", source: "tram-segments",
-        paint: { "line-color": loadColor, "line-width": 7,
-          "line-offset": ["get", "laneOffset"] },
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": loadColor, "line-width": 5 },
       });
     }
     const badgeData = {
@@ -295,22 +262,22 @@ export default function TramMap({
       m.addLayer({
         id: "tram-route-badges", type: "circle", source: "tram-route-labels",
         paint: {
-          "circle-radius": 17,
+          "circle-radius": 12,
           "circle-color": "#001b2b",
           "circle-stroke-color": loadColor,
-          "circle-stroke-width": 3,
+          "circle-stroke-width": 2,
         },
       });
       m.addLayer({
         id: "tram-route-badge-text", type: "symbol", source: "tram-route-labels",
         layout: { "text-field": ["to-string", ["get", "route"]],
-          "text-size": 13, "text-allow-overlap": true },
+          "text-size": 11, "text-allow-overlap": true },
         paint: { "text-color": "#f2f8fc" },
       });
     }
-    for (const name of ["tram-lines", "tram-glow", "tram-casing",
-      "tram-focus", "tram-focus-casing", "tram-route-badges", "tram-route-badge-text",
-      "tram-segment-casing", "tram-segment-lines"])
+    for (const name of ["tram-lines", "tram-casing", "tram-return-lines",
+      "tram-return-casing", "tram-route-badges",
+      "tram-route-badge-text", "tram-segment-lines"])
       m.setLayoutProperty(name, "visibility", showRoutes ? "visible" : "none");
     m.setLayoutProperty(
       "tram-stops",
@@ -324,9 +291,12 @@ export default function TramMap({
         ? loadColor
         : "#0095ff",
     );
-    m.setPaintProperty("tram-glow", "line-color", load ? loadColor : "#0095ff");
-    m.setPaintProperty("tram-focus", "line-color", load ? loadColor : "#0095ff");
+    m.setPaintProperty("tram-return-lines", "line-color", load ? loadColor : "#0095ff");
     m.setPaintProperty("tram-route-badges", "circle-stroke-color", load ? loadColor : "#0095ff");
+    // Маркеры должны оставаться поверх раскрашенных отрезков.
+    for (const name of ["tram-route-badges", "tram-route-badge-text",
+      "tram-stops", "selected-stop-marker", "selected-stop-label"])
+      m.moveLayer(name);
   }, [ready, geometry, stops, selectedStop, routeLoads, showRoutes, showStops, showStopSegments,
     focusedRoute, load, selectedRoutes.join(","), loadBandFilter]);
   useEffect(() => {
@@ -334,14 +304,14 @@ export default function TramMap({
   }, [focusedRoute, loadBandFilter, routeLoads, selectedRoutes.join(",")]);
   useEffect(() => {
     const m = map.current;
-    if (!ready || !m?.getLayer("tram-focus")) return;
-    const active = hoveredRoute || focusedRoute;
-    const filter = ["==", ["get", "route"], active ? Number(active) : -1];
-    m.setFilter("tram-focus", filter);
-    m.setFilter("tram-focus-casing", filter);
-    m.setPaintProperty("tram-lines", "line-opacity", active ? 0.4 : 1);
-    m.setPaintProperty("tram-casing", "line-opacity", active ? 0.5 : 1);
-    m.setPaintProperty("tram-glow", "line-opacity", active ? 0.04 : 0.12);
+    if (!ready || !m?.getLayer("tram-lines")) return;
+    const active = focusedRoute || hoveredRoute;
+    const opacity = active
+      ? ["case", ["==", ["get", "route"], Number(active)], 1, 0.3] : 1;
+    m.setPaintProperty("tram-lines", "line-opacity", opacity);
+    m.setPaintProperty("tram-casing", "line-opacity", opacity);
+    m.setPaintProperty("tram-return-lines", "line-opacity", opacity);
+    m.setPaintProperty("tram-return-casing", "line-opacity", opacity);
   }, [ready, hoveredRoute, focusedRoute]);
   const routeNumbers = [...new Set((geometry?.features || [])
     .map((f) => Number(f.properties?.route)))]

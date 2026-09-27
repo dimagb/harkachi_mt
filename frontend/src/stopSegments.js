@@ -34,7 +34,6 @@ export function stopSegments(feature, stops) {
       geometry: { type: "LineString", coordinates: coordinates.slice(from, to + 1) },
       properties: {
         route: Number(route), direction,
-        laneOffset: Number(feature.properties.laneOffset) || 0,
         loadBand: band(weight),
         fromStop: ordered[index].name,
         toStop: ordered[index + 1].name,
