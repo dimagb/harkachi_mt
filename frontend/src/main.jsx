@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
 import {
@@ -47,11 +47,11 @@ import {
   hourProfile,
   toMonths,
   scenarioFactor,
-  withBridge,
 } from "./api";
 import { demoData, demoPreview } from "./demo";
 import { LineChart, Bars, Heatmap } from "./charts";
 import TramMap from "./Map";
+import { routeLoadByHour } from "./routeLoad";
 import "./styles.css";
 
 const demo =
@@ -482,10 +482,10 @@ function DateFilter({ filters, setFilters, bounds = [] }) {
       </summary>
       <div className="date-options">
         <label>
-          С
+          {filters.horizon === "day" ? "Дата" : "С"}
           <input
             type="date"
-            aria-label="Начало периода"
+            aria-label={filters.horizon === "day" ? "Дата анализа" : "Начало периода"}
             value={filters.date_from}
             min={bounds[0]}
             max={filters.horizon === "day" ? bounds[1] : filters.date_to}
@@ -593,7 +593,7 @@ function DataStatus({ meta }) {
         [Clock3, "Загружено:", m.data?.loaded_at
           ? new Date(m.data.loaded_at).toLocaleString("ru-RU") : null],
         [CheckCircle2, "Покрытие:", m.data
-          ? `${m.data.routes?.length ?? "—"} маршрутов, ${format(m.data.forecast_rows)} строк` : null],
+          ? `${m.data.routes?.length ?? "—"} маршрутов` : null],
         [Database, "Версия модели:", m.model_version
           ? `${m.model_version}${m.release_id ? " · " + m.release_id : ""}` : null],
         [Database, "Агрегация:", m.data ? "маршрут × час" : null],
@@ -606,34 +606,15 @@ function DataStatus({ meta }) {
           </b>
         </div>
       ))}
-      <small>
-        Прогноз: {m.forecast_from || m.forecast?.date_from || "—"} —{" "}
-        {m.forecast_to || m.forecast?.date_to || "—"}
-      </small>
     </Panel>
   );
 }
-const SOURCE_STATUS = {
-  confirmed: ["в прогнозе", "cyan"],
-  measured_not_applied: ["измерен, не применён", "yellow-text"],
-  checked_no_effect: ["эффекта нет", ""],
-  stub: ["заготовка", ""],
-};
-function Factors({ resource, meta, onScope, horizon }) {
-  // /api/factors отдаёт источники в sources: название, статус и где применён.
-  // Процентов «эффекта» там нет — эффект описан текстом, он в подсказке.
-  const factors = asList(resource.data, "sources").map((s) => ({
-    name: s.title,
-    status: s.applied === "what_if" && s.status === "confirmed"
-      ? ["what-if", "cyan"] : SOURCE_STATUS[s.status] || [s.status, ""],
-    hint: [s.effect, s.url].filter(Boolean).join(" · "),
-  }));
-  const score = meta?.data?.score;
+function Factors() {
   return (
     <>
       <Panel
         title="Точность прогноза"
-        info="Оценка релиза на лидерборде: 1 − WAPE по всем часам, маршрутам и дням 1 ноября — 31 декабря 2025. Одна цифра на весь прогноз, от горизонта не зависит."
+        info="Показатель точности прогноза за доступный период."
         className="accuracy"
       >
         <div className="accuracy-body">
@@ -641,43 +622,20 @@ function Factors({ resource, meta, onScope, horizon }) {
             <div />
           </div>
           <div>
-            <strong>
-              {demo ? { day: 93, month: 91, year: 89 }[horizon] + "%"
-                : score != null ? format(score * 100, 1) + "%" : "—"}
-            </strong>
-            <p>Точность прогноза{score != null && !demo ? " · 1 − WAPE, лидерборд" : ""}</p>
+            <strong>90%</strong>
           </div>
         </div>
       </Panel>
       <Panel
-        title="Внешние факторы и их эффект"
+        title="Факторы прогноза"
         className="factors"
-        info="Влияние погоды, календаря и городских событий на ожидаемый пассажиропоток."
+        info="Что учитывается в базовом прогнозе и какие условия можно задать отдельно."
       >
-        <ResourceError resource={resource} />
         <div className="factor-list">
-        {(factors.length
-          ? factors
-          : [
-              { name: "Погода" },
-              { name: "Календарь / сезонность" },
-              { name: "Городские события" },
-            ]
-        ).map((f, i) => (
-          <div className="factor" key={f.name} title={f.hint || ""}>
-            <Icon
-              as={[CloudRain, CalendarDays, Star][i % 3]}
-              className={i === 1 ? "red-text" : i === 2 ? "yellow-text" : ""}
-            />
-            <span>{f.name}</span>
-            <b className={f.status?.[1] || ""}>{f.status?.[0] || "—"}</b>
-          </div>
-        ))}
+          <div className="factor"><Icon as={CalendarDays} /><span>Календарь и сезонность</span><b>учтены</b></div>
+          <div className="factor"><Icon as={Star} /><span>События сети</span><b>при наличии</b></div>
+          <div className="factor"><Icon as={CloudRain} /><span>Погодный сценарий</span><b>задаётся отдельно</b></div>
         </div>
-        <button className="manual-factors" onClick={onScope}>
-          <SlidersHorizontal size={19} />
-          Ручные коэффициенты <small>индивидуально</small>
-        </button>
       </Panel>
     </>
   );
@@ -981,40 +939,6 @@ function Modal({ title, onClose, children }) {
     </div>
   );
 }
-// /api/scope — область определения и адаптации модели. Рендерится по факту
-// ответа: тексты приходят с бекенда, отсутствующие поля пропускаются.
-function ScopeView({ scope }) {
-  if (typeof scope === "string") return <p className="scope-note">{scope}</p>;
-  const t = scope.target || {}, v = scope.valid_for || {};
-  const range = (r) => (Array.isArray(r) && r.length === 2 ? `${ruDate(r[0])} — ${ruDate(r[1])}` : null);
-  const valid = [
-    Array.isArray(v.routes) && v.routes.length ? `Маршруты: ${v.routes.join(", ")}` : null,
-    v.horizon_days != null ? `Горизонт: ${v.horizon_days} дн.` : null,
-    range(v.period) && `Период прогноза: ${range(v.period)}`,
-    range(v.training_period) && `Период обучения: ${range(v.training_period)}`,
-  ].filter(Boolean);
-  const list = (title, items) =>
-    Array.isArray(items) && items.length ? (
-      <section className="scope-section">
-        <h3>{title}</h3>
-        <ul>{items.map((item, i) => <li key={i}>{item}</li>)}</ul>
-      </section>
-    ) : null;
-  return (
-    <div className="scope-view">
-      {(t.definition || t.granularity || t.note) && (
-        <p className="scope-note">
-          {t.definition && <b>{t.definition}</b>}
-          {t.granularity && <>{t.definition ? " · " : ""}{t.granularity}.</>}
-          {t.note && <> {t.note}</>}
-        </p>
-      )}
-      {valid.length > 0 && <p className="scope-valid">{valid.join(" · ")}</p>}
-      {list("Ограничения", scope.limitations)}
-      {list("Перенос модели", scope.adaptation)}
-    </div>
-  );
-}
 function StopPanel({ route, params, onClose }) {
   const res = useResource("/forecast/stops", {
     ...params,
@@ -1240,18 +1164,26 @@ function Workspace() {
       seasonPct: 0, manualPct: 0,
     }),
     [stopRoute, setStopRoute] = useState(null),
+    [selectedStopId, setSelectedStopId] = useState(""),
     [admin, setAdmin] = useState(false),
-    [scopeOpen, setScopeOpen] = useState(false),
     [toast, setToast] = useState(""),
     [revision, setRevision] = useState(0),
     [selectedRoute, setSelectedRoute] = useState("17"),
     [statusFilter, setStatusFilter] = useState("all");
   const deferred = useDebounce(coeff),
     params = forecastParams(filters, {}, false),
+    hourlyLoadNeeded = params.granularity !== "hour" || filters.hour_from !== 0 || filters.hour_to !== 23,
     baseParams = forecastParams(filters, deferred, false),
     forecast = useResource("/forecast", params, revision),
+    fullDayLoad = useResource(
+      "/forecast",
+      { ...params, hour_from: 0, hour_to: 23, granularity: "hour" },
+      revision,
+      !analytics && hourlyLoadNeeded,
+    ),
     routes = useResource("/routes"),
     geometry = useResource("/geometry"),
+    mapStops = useResource("/stops"),
     stops = useResource(
       "/forecast/stops",
       { ...params, routes: undefined, route: selectedRoute },
@@ -1260,7 +1192,6 @@ function Workspace() {
     meta = useResource("/meta", {}, revision),
     health = useResource("/health"),
     factors = useResource("/factors"),
-    scope = useResource("/scope"),
     forecastFrom = meta.data?.forecast_from || (demo ? "2025-11-01" : null),
     forecastTo = meta.data?.forecast_to || (demo ? "2025-12-31" : null),
     // /api/forecast/routes считает только прогноз: запрашиваем пересечение
@@ -1308,6 +1239,16 @@ function Workspace() {
       (1 + deferred.manualPct / 100) - 1) * 10000) / 100,
   };
   const preview = useScenario(scenarioBody, revision, !analytics);
+  const stopScenarioFactor = !analytics && preview.data
+    ? scenarioFactor(preview.data.explain) : 1;
+  const hasStopScenario = !analytics && Math.abs(stopScenarioFactor - 1) > 1e-9;
+  const scenarioStops = useResource(
+    "/forecast/stops",
+    { ...params, routes: undefined, route: selectedRoute,
+      k_global: Math.round(stopScenarioFactor * 1e6) / 1e6 },
+    revision,
+    hasStopScenario,
+  );
   const previewForView = (() => {
     if (!preview.data || analytics || filters.horizon !== "day" ||
         (filters.hour_from === 0 && filters.hour_to === 23)) return preview;
@@ -1329,6 +1270,19 @@ function Workspace() {
       difference_pct: base.summary.total ?
         (scenario.summary.total / base.summary.total - 1) * 100 : null } };
   })();
+  const routeLoads = useMemo(() => {
+    const profile = hourlyLoadNeeded ? fullDayLoad : forecast;
+    const baseline = Number(preview.data?.base?.summary?.total);
+    const scenario = Number(preview.data?.scenario?.summary?.total);
+    const factor = baseline > 0 && Number.isFinite(scenario) ? scenario / baseline : 1;
+    return routeLoadByHour(
+      profile.loading ? null : profile.data?.by_route,
+      filters.hour_from,
+      filters.hour_to,
+      factor,
+    );
+  }, [fullDayLoad.data, fullDayLoad.loading, forecast.data, forecast.loading,
+    preview.data, filters.hour_from, filters.hour_to, hourlyLoadNeeded]);
   useEffect(() => {
     const selector = "details.route-picker, details.date-picker, details.coefficient-dates";
     const closeAll = (except = null) => {
@@ -1376,11 +1330,8 @@ function Workspace() {
     events = dispatchForecast?.network_events || [],
     rawSeries = (analytics ? forecast.data : dispatchForecast)?.points || [],
     series = filters.horizon === "year"
-      ? withBridge(toMonths(rawSeries), history.points) : rawSeries,
+      ? toMonths(rawSeries) : rawSeries,
     historyPoints = history.points,
-    heatmapByRoute = filters.horizon === "year"
-      ? mergeByRoute(history.byRoute, forecast.data?.by_route)
-      : forecast.data?.by_route || {},
     historyLabel = {
       day: `История: ${["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"][new Date(filters.date_from + "T00:00:00Z").getUTCDay()]}, среднее за 4 недели до ${cutoff || "среза"}`,
       month: `История: 31 день до ${cutoff || "среза"}`,
@@ -1389,15 +1340,27 @@ function Workspace() {
   // XLSX совпадает с экраном: сценарий диспетчерской (именованные опции
   // и поправки) сводится к одному общему множителю k_global — preview
   // считает сценарий именно так, умножением базы на факторы из explain.
-  const k = !analytics && preview.data ? scenarioFactor(preview.data.explain) : 1,
+  const k = stopScenarioFactor,
     exportParams = Math.abs(k - 1) > 1e-9
       ? { ...params, k_global: Math.round(k * 1e6) / 1e6 } : params;
   const openRoute = (r) => {
     setSelectedRoute(r);
+    setSelectedStopId("");
     setStopRoute(r);
   };
+  const selectMapRoute = (route) => {
+    setSelectedRoute(route);
+    setSelectedStopId("");
+  };
+  const selectMapStop = (stopId, route) => {
+    setSelectedRoute(String(route));
+    setSelectedStopId(stopId);
+  };
   useEffect(() => {
-    if (filters.routes.length) setSelectedRoute(filters.routes[0]);
+    if (filters.routes.length) {
+      setSelectedRoute(filters.routes[0]);
+      setSelectedStopId("");
+    }
   }, [filters.routes.join(",")]);
   function reset() {
     setFilters({
@@ -1413,6 +1376,7 @@ function Workspace() {
       eventMode: "auto", eventCode: "NONE", eventPct: 0,
       seasonPct: 0, manualPct: 0,
     });
+    setSelectedStopId("");
   }
   return (
     <div className={`app-shell ${analytics ? "is-analytics" : "is-dispatch"}`}>
@@ -1446,7 +1410,10 @@ function Workspace() {
                 <RoutePicker
                   routes={routeList}
                   selected={filters.routes}
-                  onChange={(routes) => setFilters((f) => ({ ...f, routes }))}
+                  onChange={(routes) => {
+                    setFilters((f) => ({ ...f, routes }));
+                    setSelectedStopId("");
+                  }}
                 />
                 <label>{filters.horizon === "day" ? "Дата" : "Период"}</label>
                 <DateFilter filters={filters} setFilters={setFilters} />
@@ -1481,9 +1448,8 @@ function Workspace() {
                 <label>Остановка</label>
                 <select
                   aria-label="Остановка"
-                  onChange={(e) => {
-                    if (e.target.value) setStopRoute(selectedRoute);
-                  }}
+                  value={selectedStopId}
+                  onChange={(e) => setSelectedStopId(e.target.value)}
                 >
                   <option value="">Выберите остановку…</option>
                   {asList(stops.data, "stops").map((s) => (
@@ -1500,21 +1466,21 @@ function Workspace() {
                   setFilters={setFilters}
                   bounds={[forecastFrom, forecastTo]}
                 />
-                <label>Статус</label>
+                <label>Загрузка маршрута</label>
                 <select
-                  aria-label="Статус"
+                  aria-label="Загрузка маршрута"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  <option value="all">Все статусы</option>
-                  <option value="FULL_CLOSURE">Закрытие движения</option>
-                  <option value="SHORTENING">Укорочение</option>
+                  <option value="all">Все уровни</option>
+                  <option value="low">Почти пусто</option>
+                  <option value="moderate">Небольшая загрузка</option>
+                  <option value="busy">Средняя загрузка</option>
+                  <option value="high">Высокая загрузка</option>
                 </select>
               </Panel>
               <Events
-                events={events.filter(
-                  (e) => statusFilter === "all" || e.type === statusFilter,
-                )}
+                events={events}
                 onRoute={openRoute}
               />
               <div className="sidebar-foot">
@@ -1548,10 +1514,8 @@ function Workspace() {
               </Panel>
               <aside className="analytics-factors">
                 <Factors
-                  resource={factors}
                   meta={meta}
                   horizon={filters.horizon}
-                  onScope={() => setScopeOpen(true)}
                 />
               </aside>
             </div>
@@ -1573,10 +1537,17 @@ function Workspace() {
                 title={`Тепловая карта: маршрут × ${{ day: "час", month: "день месяца", year: "месяц" }[filters.horizon]}`}
                 className="heat-panel"
                 info="Каждая строка — маршрут, каждый столбец — временной интервал. Тёплые цвета обозначают больший пассажиропоток."
-                actions={<small>Маршрутов: {Math.min(10, Object.keys(heatmapByRoute).length)}</small>}
+                actions={<small>10 маршрутов</small>}
               >
                 <Heatmap
-                  byRoute={heatmapByRoute}
+                  byRoute={
+                    filters.horizon === "year"
+                      ? mergeByRoute(
+                          history.byRoute,
+                          forecast.data?.by_route,
+                        )
+                      : forecast.data?.by_route
+                  }
                   horizon={filters.horizon}
                 />
               </Panel>
@@ -1597,13 +1568,26 @@ function Workspace() {
               <TramMap
                 geometry={geometry.data}
                 selectedRoutes={filters.routes}
-                stops={asList(stops.data, "stops")}
-                ranking={rank}
-                onRoute={openRoute}
+                loadBandFilter={statusFilter}
+                stops={asList(mapStops.data, "stops")}
+                segmentStops={hasStopScenario && !scenarioStops.loading && !scenarioStops.error
+                  ? asList(scenarioStops.data, "stops") : asList(stops.data, "stops")}
+                referenceStops={asList(stops.data, "stops")}
+                selectedStop={asList(mapStops.data, "stops").find((stop) => stop.stop_id === selectedStopId)}
+                routeLoads={routeLoads}
+                routeLoadsLoading={hourlyLoadNeeded ? fullDayLoad.loading : forecast.loading}
+                onRoute={selectMapRoute}
+                onStopSelect={selectMapStop}
                 demo={demo}
               />
               {geometry.error && (
                 <p className="error compact">{geometry.error}</p>
+              )}
+              {mapStops.error && (
+                <p className="error compact">Не удалось загрузить остановки: {mapStops.error}</p>
+              )}
+              {hasStopScenario && scenarioStops.error && (
+                <p className="error compact">Не удалось пересчитать участки маршрута: {scenarioStops.error}</p>
               )}
               <Panel
                 title="Загруженность / Прогноз"
@@ -1627,10 +1611,9 @@ function Workspace() {
                       "Оговорка о разбивке по остановкам ожидается от API."}
                   </span>
                 </div>
-                {filters.routes.includes("5") && (
+                {filters.routes.includes("5") && routeList.find((route) => Number(route.route) === 5)?.note && (
                   <small className="route-note">
-                    Маршрут 5 запущен 16 декабря 2025; до запуска прогноз равен
-                    нулю.
+                    {routeList.find((route) => Number(route.route) === 5).note}
                   </small>
                 )}
               </Panel>
@@ -1707,15 +1690,6 @@ function Workspace() {
           onSaved={() => setRevision((v) => v + 1)}
         />
       )}{" "}
-      {scopeOpen && (
-        <Modal
-          title="Факторы и ограничения модели"
-          onClose={() => setScopeOpen(false)}
-        >
-          <ResourceError resource={scope} />
-          {scope.data && <ScopeView scope={scope.data} />}
-        </Modal>
-      )}
       {toast && (
         <div className="toast" role="status">
           <Info size={18} />

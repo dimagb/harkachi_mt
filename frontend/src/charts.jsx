@@ -30,16 +30,26 @@ export function LineChart({
     B = 38,
     iw = W - L - R,
     ih = H - T - B;
-  const x = (p) =>
-      L + (keys.indexOf(p.key) * iw) / Math.max(keys.length - 1, 1),
+  const x = (p) => horizon === "year"
+      ? L + ((Number(String(p.key).slice(5, 7)) - 1) * iw) / 12
+      : L + (keys.indexOf(p.key) * iw) / Math.max(keys.length - 1, 1),
     y = (p) => T + ih * (1 - Number(p.value) / max),
     path = (arr) =>
       arr.map((p, i) => `${i ? "L" : "M"}${x(p)},${y(p)}`).join(" ");
   if (!all.length)
     return <div className="empty">Нет данных за выбранный период</div>;
-  // Первая настоящая точка прогноза: «мостовая» точка (bridge) — это
-  // последний месяц истории, отметка начала прогноза ставится не на неё.
-  const start = points.find((p) => !p.bridge);
+  const start = points[0];
+  const lastHistory = history.at(-1);
+  const adjacent = horizon === "year" && start && lastHistory &&
+    new Date(`${lastHistory.key}-01T00:00:00Z`).getUTCMonth() + 1 ===
+      new Date(`${start.key}-01T00:00:00Z`).getUTCMonth() &&
+    x(start) > x(lastHistory);
+  // Подписи месяцев стоят на их начале: красный ряд начинается строго на ноябре.
+  const boundaryX = start && x(start);
+  const historyPath = path(history);
+  const forecastPath = points.length
+    ? `${path(points)}${horizon === "year" ? ` L${W - R},${y(points.at(-1))}` : ""}`
+    : "";
   const unit = max > 2e6 ? 1e6 : 1000;
   return (
     <div className="chart-wrap">
@@ -85,15 +95,15 @@ export function LineChart({
         {keys.map((key, i) => (
           <g key={key}>
             <line
-              x1={L + (i * iw) / Math.max(keys.length - 1, 1)}
-              x2={L + (i * iw) / Math.max(keys.length - 1, 1)}
+              x1={x({ key })}
+              x2={x({ key })}
               y1={T}
               y2={H - B}
               className="grid"
             />
             {(keys.length <= 24 || i % Math.ceil(keys.length / 16) === 0) && (
               <text
-                x={L + (i * iw) / Math.max(keys.length - 1, 1)}
+                x={x({ key })}
                 y={H - B + 20}
                 textAnchor="middle"
               >
@@ -105,11 +115,11 @@ export function LineChart({
         {points.length > 0 && (
           <>
             <path
-              d={`${path(points)} L${x(points.at(-1))},${H - B} L${x(points[0])},${H - B} Z`}
+              d={`${forecastPath} L${horizon === "year" ? W - R : x(points.at(-1))},${H - B} L${boundaryX},${H - B} Z`}
               fill={`url(#fill${id})`}
             />
             <path
-              d={path(points)}
+              d={forecastPath}
               stroke="#ef304c"
               strokeWidth="12"
               opacity=".15"
@@ -118,13 +128,21 @@ export function LineChart({
             />
           </>
         )}
+        {adjacent && (
+          <path
+            d={`M${x(lastHistory)},${y(lastHistory)} L${x(start)},${y(start)}`}
+            fill="none"
+            stroke="#008dff"
+            strokeWidth="2.6"
+          />
+        )}
         {[
-          { arr: history, color: "#008dff" },
-          { arr: points, color: "#ff3656" },
-        ].map(({ arr, color }) => (
+          { arr: history, color: "#008dff", line: historyPath },
+          { arr: points, color: "#ff3656", line: forecastPath },
+        ].map(({ arr, color, line }) => (
           <g key={color}>
             <path
-              d={path(arr)}
+              d={line}
               fill="none"
               stroke={color}
               strokeWidth="2.6"
@@ -132,7 +150,7 @@ export function LineChart({
                 dispatch && color === "#ff3656" ? "8 5" : undefined
               }
             />
-            {arr.filter((p) => !p.bridge).map((p) => (
+            {arr.map((p) => (
               <circle
                 key={p.key}
                 cx={x(p)}
@@ -151,14 +169,14 @@ export function LineChart({
         {horizon === "year" && start && (
           <g>
             <line
-              x1={x(start)}
-              x2={x(start)}
+              x1={boundaryX}
+              x2={boundaryX}
               y1={T}
               y2={H - B}
               stroke="#8fa3ba"
               strokeDasharray="5 4"
             />
-            <text x={Math.min(x(start) + 7, W - 130)} y={T + 8}>
+            <text x={Math.min(boundaryX + 7, W - 130)} y={T + 8}>
               Начало прогноза
             </text>
           </g>

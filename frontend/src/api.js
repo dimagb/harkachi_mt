@@ -66,21 +66,6 @@ export function toMonths(points) {
   }
   return [...months].sort().map(([key, value]) => ({ key, label: key, value }));
 }
-// «Мост» между фактом и прогнозом на годовом графике: последний месяц
-// истории с его фактическим значением ставится первой точкой ряда
-// прогноза, чтобы линия прогноза начиналась там, где кончается факт.
-// Значение не выдумывается — это та же точка истории. Только если оба
-// ряда непусты и месяцы соседние.
-export function withBridge(forecast = [], history = []) {
-  if (!forecast.length || !history.length) return forecast;
-  const last = [...history].sort((a, b) => String(a.key).localeCompare(String(b.key))).at(-1);
-  const lastKey = String(last.key), firstKey = String(forecast[0].key);
-  if (!/^\d{4}-\d{2}$/.test(lastKey) || !/^\d{4}-\d{2}$/.test(firstKey)) return forecast;
-  const [y, m] = lastKey.split("-").map(Number);
-  const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
-  if (next !== firstKey) return forecast;
-  return [{ ...last, bridge: true }, ...forecast];
-}
 export function scenarioFactor(explain = []) {
   return explain.reduce(
     (k, step) => (step.factor == null ? k : k * Number(step.factor)),

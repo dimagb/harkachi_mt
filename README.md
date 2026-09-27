@@ -227,9 +227,15 @@ npm и сеть при сборке не нужны. Вход без парол�
 Пересобрать фронтенд из исходников (`frontend/`, нужен Node.js):
 
 ```bash
-cd frontend && npm ci && npm test && npm run build
-# затем заменить содержимое service/static/ на frontend/dist/ (.gitkeep оставить)
+cd frontend && npm ci && npm test && npm run build:service
+# dist/ автоматически скопирован в service/static/, .gitkeep сохранён
 ```
+
+После изменения фронтенда снова выполните `npm run build:service`, затем
+пересоберите сервис: `cd ../service && docker compose up --build`.
+Dockerfile и Compose используют готовую статику; отдельный Vite или nginx
+для этого запуска не требуется. Текущий состав экранов и ограничения UI
+описаны в `docs/frontend-tasks.md` и `frontend/README.md`.
 
 ### Нагрузочный тест
 
