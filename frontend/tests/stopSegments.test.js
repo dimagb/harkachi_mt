@@ -12,8 +12,9 @@ test("colors consecutive supplied stop segments without inventing the reverse di
   ];
   const segments = stopSegments(geometry, stops);
   assert.equal(segments.length, 2);
-  assert.equal(segments[0].properties.loadBand, "moderate");
+  assert.equal(segments[0].properties.loadBand, "low");
   assert.equal(segments[1].properties.loadBand, "high");
   assert.deepEqual(segments[0].geometry.coordinates, [[1, 1], [2, 2]]);
   assert.deepEqual(stopSegments({ ...geometry, properties: { route: 11, direction: 1 } }, stops), []);
+  assert.deepEqual(stopSegments(geometry, [{ ...stops[0], lon: 9 }, stops[1]]), []);
 });

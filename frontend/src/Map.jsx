@@ -108,7 +108,8 @@ export default function TramMap({
         m.getCanvas().style.cursor = "";
         setHoveredRoute(null);
       };
-      for (const layer of ["tram-lines", "tram-segment-lines"]) {
+      for (const layer of ["tram-lines", "tram-segment-lines",
+        "tram-route-badges", "tram-route-badge-text"]) {
         m.on("click", layer, selectRoute);
         m.on("mousemove", layer, hoverRoute);
         m.on("mouseleave", layer, leaveRoute);
@@ -128,6 +129,8 @@ export default function TramMap({
       .filter((f) => matchesRoute(f.properties?.route))
       .map((f) => Number(f.properties?.route)))]
       .filter(Number.isFinite).sort((a, b) => a - b);
+    const alignedRoute = focusedRoute ||
+      (showStops && stops[0] ? String(stops[0].route) : null);
     const data = {
       type: "FeatureCollection",
       // Пустой выбор — все маршруты. У маршрута две features (по одной на
@@ -139,9 +142,10 @@ export default function TramMap({
         properties: {
           ...f.properties,
           loadBand: routeLoads[String(f.properties.route)]?.band || "unknown",
-          laneOffset: (visibleRoutes.indexOf(Number(f.properties.route)) -
-            (visibleRoutes.length - 1) / 2) * 6 *
-            (Number(f.properties.direction) === 1 ? -1 : 1),
+          laneOffset: alignedRoute === String(f.properties.route) ? 0 :
+            (visibleRoutes.indexOf(Number(f.properties.route)) -
+              (visibleRoutes.length - 1) / 2) * 6 *
+              (Number(f.properties.direction) === 1 ? -1 : 1),
         },
       })),
     };
@@ -246,26 +250,40 @@ export default function TramMap({
           "line-offset": ["get", "laneOffset"] },
       });
     }
-    if (!m.getLayer("tram-labels")) m.addLayer({
-      id: "tram-labels",
-      type: "symbol",
-      source: "trams",
-      filter: ["==", ["get", "direction"], 0],
-      layout: {
-        "symbol-placement": "line",
-        "symbol-spacing": 220,
-        "text-field": ["concat", "№", ["to-string", ["get", "route"]]],
-        "text-size": 14,
-        "text-allow-overlap": false,
-      },
-      paint: {
-        "text-color": "#ffffff",
-        "text-halo-color": "#00111d",
-        "text-halo-width": 3,
-      },
-    });
+    const badgeData = {
+      type: "FeatureCollection",
+      features: data.features.filter((feature) => Number(feature.properties.direction) === 0)
+        .map((feature, index) => {
+          const coordinates = feature.geometry.coordinates;
+          const position = [0.35, 0.55, 0.75][index % 3];
+          return {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: coordinates[Math.floor((coordinates.length - 1) * position)] },
+            properties: { route: feature.properties.route, loadBand: feature.properties.loadBand },
+          };
+        }),
+    };
+    if (m.getSource("tram-route-labels")) m.getSource("tram-route-labels").setData(badgeData);
+    else {
+      m.addSource("tram-route-labels", { type: "geojson", data: badgeData });
+      m.addLayer({
+        id: "tram-route-badges", type: "circle", source: "tram-route-labels",
+        paint: {
+          "circle-radius": 17,
+          "circle-color": "#001b2b",
+          "circle-stroke-color": loadColor,
+          "circle-stroke-width": 3,
+        },
+      });
+      m.addLayer({
+        id: "tram-route-badge-text", type: "symbol", source: "tram-route-labels",
+        layout: { "text-field": ["to-string", ["get", "route"]],
+          "text-size": 13, "text-allow-overlap": true },
+        paint: { "text-color": "#f2f8fc" },
+      });
+    }
     for (const name of ["tram-lines", "tram-glow", "tram-casing",
-      "tram-focus", "tram-focus-casing", "tram-labels",
+      "tram-focus", "tram-focus-casing", "tram-route-badges", "tram-route-badge-text",
       "tram-segment-casing", "tram-segment-lines"])
       m.setLayoutProperty(name, "visibility", showRoutes ? "visible" : "none");
     m.setLayoutProperty(
@@ -282,6 +300,7 @@ export default function TramMap({
     );
     m.setPaintProperty("tram-glow", "line-color", load ? loadColor : "#0095ff");
     m.setPaintProperty("tram-focus", "line-color", load ? loadColor : "#0095ff");
+    m.setPaintProperty("tram-route-badges", "circle-stroke-color", load ? loadColor : "#0095ff");
   }, [ready, geometry, stops, routeLoads, showRoutes, showStops, showStopSegments,
     focusedRoute, load, selectedRoutes.join(","), loadBandFilter]);
   useEffect(() => {
@@ -374,7 +393,9 @@ export default function TramMap({
           <br />
           Маршруты и остановки: данные API
           <br />
-          Цвет линии: нагрузка относительно пикового часа каждого маршрута
+          Цвет маршрута: поток относительно пикового часа.
+          <br />
+          Цвет участков выбранного маршрута: средняя оценочная доля посадок у соседних остановок.
         </div>
       )}
       {load && showRoutes && <div className="map-load-legend" aria-label="Уровни нагрузки маршрутов">
@@ -393,7 +414,7 @@ export default function TramMap({
               ["busy", "Повышенные"], ["high", "Высокие"]].map(([band, label]) =>
               <span key={band}><i style={{ backgroundColor: LOAD_COLORS[band] }} />{label}</span>)}
           </div>
-          <small>Относительно остановок маршрута · не заполненность вагона</small>
+          <small>Квартили внутри маршрута · средняя доля соседних остановок · не заполненность вагона</small>
         </div>
       )}
       {(error || demo) && (
