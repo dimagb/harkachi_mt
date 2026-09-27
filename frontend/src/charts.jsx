@@ -132,9 +132,8 @@ export function LineChart({
           <path
             d={`M${x(lastHistory)},${y(lastHistory)} L${x(start)},${y(start)}`}
             fill="none"
-            stroke="#8fa3ba"
-            strokeWidth="2"
-            strokeDasharray="4 4"
+            stroke="#008dff"
+            strokeWidth="2.6"
           />
         )}
         {[
