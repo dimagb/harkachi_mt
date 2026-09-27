@@ -93,8 +93,8 @@ python service/loadtest/loadtest.py --url http://localhost:8000 --duration 30 --
 python service/loadtest/loadtest.py --url http://localhost:8000 --duration 30 --threads 32 --cold
 ```
 
-Итог в контейнере 2 CPU / 2 GiB, два воркера: прогретый кеш 3 543 RPS при
-p95 21 мс, холодный 537 RPS при p95 90 мс — требование ТЗ выполняется
+Итог в контейнере 2 CPU / 2 GiB, два воркера: прогретый кеш 2 614 RPS при
+p95 38 мс, холодный 497 RPS при p95 102 мс — требование ТЗ выполняется
 в обоих режимах. Полная таблица — `service/README.md`.
 
 ---
