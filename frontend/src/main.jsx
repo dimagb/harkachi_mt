@@ -1187,6 +1187,7 @@ function Workspace() {
     ),
     routes = useResource("/routes"),
     geometry = useResource("/geometry"),
+    mapStops = useResource("/stops"),
     stops = useResource(
       "/forecast/stops",
       { ...params, routes: undefined, route: selectedRoute },
@@ -1242,6 +1243,16 @@ function Workspace() {
       (1 + deferred.manualPct / 100) - 1) * 10000) / 100,
   };
   const preview = useScenario(scenarioBody, revision, !analytics);
+  const stopScenarioFactor = !analytics && preview.data
+    ? scenarioFactor(preview.data.explain) : 1;
+  const hasStopScenario = !analytics && Math.abs(stopScenarioFactor - 1) > 1e-9;
+  const scenarioStops = useResource(
+    "/forecast/stops",
+    { ...params, routes: undefined, route: selectedRoute,
+      k_global: Math.round(stopScenarioFactor * 1e6) / 1e6 },
+    revision,
+    hasStopScenario,
+  );
   const previewForView = (() => {
     if (!preview.data || analytics || filters.horizon !== "day" ||
         (filters.hour_from === 0 && filters.hour_to === 23)) return preview;
@@ -1333,21 +1344,28 @@ function Workspace() {
   // XLSX совпадает с экраном: сценарий диспетчерской (именованные опции
   // и поправки) сводится к одному общему множителю k_global — preview
   // считает сценарий именно так, умножением базы на факторы из explain.
-  const k = !analytics && preview.data ? scenarioFactor(preview.data.explain) : 1,
+  const k = stopScenarioFactor,
     exportParams = Math.abs(k - 1) > 1e-9
       ? { ...params, k_global: Math.round(k * 1e6) / 1e6 } : params;
   const openRoute = (r) => {
     setSelectedRoute(r);
+    setSelectedStopId("");
     setStopRoute(r);
   };
   const selectMapRoute = (route) => {
     setSelectedRoute(route);
     setSelectedStopId("");
   };
+  const selectMapStop = (stopId, route) => {
+    setSelectedRoute(String(route));
+    setSelectedStopId(stopId);
+  };
   useEffect(() => {
-    if (filters.routes.length) setSelectedRoute(filters.routes[0]);
+    if (filters.routes.length) {
+      setSelectedRoute(filters.routes[0]);
+      setSelectedStopId("");
+    }
   }, [filters.routes.join(",")]);
-  useEffect(() => setSelectedStopId(""), [selectedRoute]);
   function reset() {
     setFilters({
       horizon: "day",
@@ -1396,7 +1414,10 @@ function Workspace() {
                 <RoutePicker
                   routes={routeList}
                   selected={filters.routes}
-                  onChange={(routes) => setFilters((f) => ({ ...f, routes }))}
+                  onChange={(routes) => {
+                    setFilters((f) => ({ ...f, routes }));
+                    setSelectedStopId("");
+                  }}
                 />
                 <label>{filters.horizon === "day" ? "Дата" : "Период"}</label>
                 <DateFilter filters={filters} setFilters={setFilters} />
@@ -1552,16 +1573,25 @@ function Workspace() {
                 geometry={geometry.data}
                 selectedRoutes={filters.routes}
                 loadBandFilter={statusFilter}
-                stops={asList(stops.data, "stops")}
-                selectedStop={asList(stops.data, "stops").find((stop) => stop.stop_id === selectedStopId)}
+                stops={asList(mapStops.data, "stops")}
+                segmentStops={hasStopScenario && !scenarioStops.loading && !scenarioStops.error
+                  ? asList(scenarioStops.data, "stops") : asList(stops.data, "stops")}
+                referenceStops={asList(stops.data, "stops")}
+                selectedStop={asList(mapStops.data, "stops").find((stop) => stop.stop_id === selectedStopId)}
                 routeLoads={routeLoads}
                 routeLoadsLoading={hourlyLoadNeeded ? fullDayLoad.loading : forecast.loading}
                 onRoute={selectMapRoute}
-                onStopSelect={setSelectedStopId}
+                onStopSelect={selectMapStop}
                 demo={demo}
               />
               {geometry.error && (
                 <p className="error compact">{geometry.error}</p>
+              )}
+              {mapStops.error && (
+                <p className="error compact">Не удалось загрузить остановки: {mapStops.error}</p>
+              )}
+              {hasStopScenario && scenarioStops.error && (
+                <p className="error compact">Не удалось пересчитать участки маршрута: {scenarioStops.error}</p>
               )}
               <Panel
                 title="Загруженность / Прогноз"

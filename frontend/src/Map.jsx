@@ -17,6 +17,8 @@ const loadColor = [
 export default function TramMap({
   geometry,
   stops = [],
+  segmentStops = [],
+  referenceStops = [],
   selectedStop = null,
   routeLoads = {},
   routeLoadsLoading = false,
@@ -115,8 +117,11 @@ export default function TramMap({
         onClick.current(route);
       };
       const selectStop = (e) => {
-        const stopId = e.features[0]?.properties?.stop_id;
-        if (stopId) onStopClick.current(stopId);
+        const { stop_id: stopId, route } = e.features[0]?.properties || {};
+        if (stopId && route != null) {
+          setFocusedRoute(String(route));
+          onStopClick.current(stopId, route);
+        }
       };
       const hoverRoute = (e) => {
         m.getCanvas().style.cursor = "pointer";
@@ -203,12 +208,12 @@ export default function TramMap({
     const sd = {
       type: "FeatureCollection",
       features: stops
-        .filter((s) => (!focusedRoute || String(s.route) === focusedRoute) &&
+        .filter((s) => matchesRoute(s.route) &&
           Number.isFinite(s.lat) && Number.isFinite(s.lon))
         .map((s) => ({
           type: "Feature",
           geometry: { type: "Point", coordinates: [s.lon, s.lat] },
-          properties: { name: s.name, is_hub: s.is_hub, stop_id: s.stop_id },
+          properties: { name: s.name, is_hub: s.is_hub, stop_id: s.stop_id, route: s.route },
         })),
     };
     if (m.getSource("stops")) m.getSource("stops").setData(sd);
@@ -231,7 +236,8 @@ export default function TramMap({
       features: selectedStop && Number.isFinite(selectedStop.lat) && Number.isFinite(selectedStop.lon)
         ? [{ type: "Feature", geometry: { type: "Point",
           coordinates: [selectedStop.lon, selectedStop.lat] },
-          properties: { name: selectedStop.name, stop_id: selectedStop.stop_id } }] : [],
+          properties: { name: selectedStop.name, stop_id: selectedStop.stop_id,
+            route: selectedStop.route } }] : [],
     };
     if (m.getSource("selected-stop")) m.getSource("selected-stop").setData(selectedStopData);
     else {
@@ -248,7 +254,7 @@ export default function TramMap({
     const segments = focusedRoute && showStopSegments
       ? data.features.flatMap((feature) =>
           String(feature.properties.route) === focusedRoute
-            ? stopSegments(feature, stops) : [])
+            ? stopSegments(feature, segmentStops, referenceStops) : [])
       : [];
     const segmentData = { type: "FeatureCollection", features: segments };
     if (m.getSource("tram-segments")) m.getSource("tram-segments").setData(segmentData);
@@ -314,7 +320,8 @@ export default function TramMap({
     for (const name of ["tram-route-badges", "tram-route-badge-text",
       "tram-stops", "selected-stop-marker", "selected-stop-label"])
       m.moveLayer(name);
-  }, [ready, geometry, stops, selectedStop, routeLoads, showRoutes, showStops, showStopSegments,
+  }, [ready, geometry, stops, segmentStops, referenceStops, selectedStop,
+    routeLoads, showRoutes, showStops, showStopSegments,
     focusedRoute, load, selectedRoutes.join(","), loadBandFilter]);
   useEffect(() => {
     if (focusedRoute && !matchesRoute(focusedRoute)) setFocusedRoute(null);
@@ -336,7 +343,7 @@ export default function TramMap({
     .filter(matchesRoute);
   const hasStopSegments = focusedRoute && (geometry?.features || []).some((feature) =>
     String(feature.properties?.route) === focusedRoute &&
-    stopSegments(feature, stops).length > 0);
+    stopSegments(feature, segmentStops, referenceStops).length > 0);
   return (
     <section className="map panel">
       <div ref={el} className="map-canvas" />
@@ -427,7 +434,7 @@ export default function TramMap({
               ["busy", "Повышенные"], ["high", "Высокие"]].map(([band, label]) =>
               <span key={band}><i style={{ backgroundColor: LOAD_COLORS[band] }} />{label}</span>)}
           </div>
-          <small>Квартили внутри маршрута · средняя доля соседних остановок · не заполненность вагона</small>
+          <small>Оценочные посадки у соседних остановок · цвет относительно базового прогноза маршрута, не заполненности вагона</small>
         </div>
       )}
       {(error || demo) && (
