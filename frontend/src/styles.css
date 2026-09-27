@@ -2175,8 +2175,7 @@ small {
 }
 @media (min-width:901px) {
   .dispatch-layout .left-sidebar {
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: visible;
   }
   .dispatch-chart .chart-wrap { display:flex; flex-direction:column; overflow:hidden; }
   .dispatch-chart .chart-wrap .legend { flex-shrink:0; }
@@ -2216,7 +2215,14 @@ small {
 .app-header .weather { grid-column:5; padding:0; border:0; }
 .app-header .system-status, .analytics-header .system-status { grid-column:6; margin:0; }
 .app-header .user-menu { grid-column:7; }
-@media(min-width:901px) { .analytics-layout .left-sidebar { overflow-y:auto; overflow-x:clip; } }
+@media(min-width:901px) {
+  .analytics-layout,
+  .dispatch-layout {
+    height: auto;
+    min-height: calc(100vh - 58px);
+  }
+  .analytics-layout .left-sidebar { overflow: visible; }
+}
 @media(max-width:1150px) {
   .app-header, .app-header.analytics-header { grid-template-columns:154px minmax(180px,1fr) 100px 240px auto auto; gap:8px; }
   .app-header .brand, .analytics-header .brand { width:154px; }
