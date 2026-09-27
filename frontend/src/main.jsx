@@ -482,10 +482,10 @@ function DateFilter({ filters, setFilters, bounds = [] }) {
       </summary>
       <div className="date-options">
         <label>
-          С
+          {filters.horizon === "day" ? "Дата" : "С"}
           <input
             type="date"
-            aria-label="Начало периода"
+            aria-label={filters.horizon === "day" ? "Дата анализа" : "Начало периода"}
             value={filters.date_from}
             min={bounds[0]}
             max={filters.horizon === "day" ? bounds[1] : filters.date_to}
@@ -606,10 +606,6 @@ function DataStatus({ meta }) {
           </b>
         </div>
       ))}
-      <small>
-        Прогноз: {m.forecast_from || m.forecast?.date_from || "—"} —{" "}
-        {m.forecast_to || m.forecast?.date_to || "—"}
-      </small>
     </Panel>
   );
 }
