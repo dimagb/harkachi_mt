@@ -1177,6 +1177,40 @@ function Workspace() {
     factors = useResource("/factors"),
     scope = useResource("/scope");
   useEffect(() => {
+    const selector = "details.route-picker, details.date-picker, details.coefficient-dates";
+    const closeAll = (except = null) => {
+      document.querySelectorAll(selector).forEach((details) => {
+        if (details !== except) details.open = false;
+      });
+    };
+    const onToggle = (event) => {
+      const details = event.target;
+      if (details instanceof HTMLDetailsElement && details.matches(selector) && details.open) {
+        closeAll(details);
+      }
+    };
+    const onPointerDown = (event) => {
+      if (!event.target.closest(selector)) closeAll();
+    };
+    const onClick = (event) => {
+      const details = event.target.closest(selector);
+      if (details && event.target.closest("summary")) closeAll(details);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") closeAll();
+    };
+    document.addEventListener("toggle", onToggle, true);
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("click", onClick, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("toggle", onToggle, true);
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+  useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(""), 7000);
     return () => clearTimeout(t);

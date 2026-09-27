@@ -391,6 +391,14 @@ small {
   display: block;
   margin: 6px 0;
 }
+.filters .route-options,
+.filters .date-options {
+  position: static;
+  width: 100%;
+  min-width: 0;
+  margin-top: 5px;
+  box-shadow: none;
+}
 .export {
   margin-top: 15px;
   font-size: 15px;
@@ -2166,6 +2174,10 @@ small {
   visibility: hidden;
 }
 @media (min-width:901px) {
+  .dispatch-layout .left-sidebar {
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
   .dispatch-chart .chart-wrap { display:flex; flex-direction:column; overflow:hidden; }
   .dispatch-chart .chart-wrap .legend { flex-shrink:0; }
   .dispatch-chart .chart-wrap svg { flex:1; min-height:0; height:calc(100% - 22px); max-height:none; }
