@@ -14,7 +14,7 @@ export async function request(path, params = {}, signal, options = {}) {
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
     throw new Error(
-      typeof e.detail === "string" ? e.detail : `Ошибка API ${res.status}`,
+      typeof e.detail === "string" ? e.detail : e.message || `Ошибка API ${res.status}`,
     );
   }
   if (res.status === 204) return null;

@@ -44,7 +44,7 @@ import {
   format,
   mergeByRoute,
 } from "./api";
-import { demoData } from "./demo";
+import { demoData, demoPreview } from "./demo";
 import { LineChart, Bars, Heatmap } from "./charts";
 import TramMap from "./Map";
 import "./styles.css";
@@ -72,6 +72,34 @@ function useResource(path, params = {}, revision = 0) {
       });
     return () => controller.abort();
   }, [path, key, revision]);
+  return state;
+}
+function useScenario(body, revision = 0, enabled = true) {
+  const [state, set] = useState({ data: null, loading: true, error: "" });
+  const key = JSON.stringify(body);
+  useEffect(() => {
+    if (!enabled) {
+      set({ data: null, loading: false, error: "" });
+      return;
+    }
+    const controller = new AbortController();
+    set({ data: null, loading: true, error: "" });
+    (demo
+      ? Promise.resolve().then(() => demoPreview(body))
+      : request("/forecast/preview", {}, controller.signal, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: key,
+        }))
+      .then((data) => {
+        if (!controller.signal.aborted) set({ data, loading: false, error: "" });
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted && e.name !== "AbortError")
+          set({ data: null, loading: false, error: e.message });
+      });
+    return () => controller.abort();
+  }, [key, revision, enabled]);
   return state;
 }
 function useDebounce(value) {
@@ -663,110 +691,65 @@ function Ranking({ resource, onRoute, horizon }) {
 function Coefficients({
   coeff,
   setCoeff,
-  selectedRoute,
-  base,
-  forecast,
   factors,
+  preview,
+  date,
 }) {
-  const controls = [
-    ["k_weather", "Погода", CloudRain],
-    ["k_event", "Событие", UsersRound],
-    ["route", "Маршрут", TramFront],
-    ["k_global", "Глобальный масштаб", Sigma],
-  ];
-  const total = forecast?.summary?.total,
-    baseline = base?.summary?.total;
+  const month = Number(date.slice(5, 7));
+  const season = (factors?.seasons?.warm || [4, 5, 6, 7, 8, 9]).includes(month)
+    ? "warm" : "cold";
+  const options = factors?.options || [];
+  const scenarios = (factor) => options.filter((option) =>
+    option.factor_code === factor && option.confirmed === true &&
+    (option.season === season || option.season === "all"));
+  const baseline = preview.data?.base?.summary?.total;
+  const total = preview.data?.scenario?.summary?.total;
+  const update = (key, value) => setCoeff((current) => ({ ...current, [key]: value }));
   return (
     <Panel title="Корректирующие коэффициенты" className="coefficients">
-      {controls.map(([key, label, I]) => {
-        const value =
-          key === "route"
-            ? Number((coeff.k_routes || "").split(":")[1] || 1)
-            : coeff[key];
-        return (
-          <div className={`coefficient ${key}`} key={key}>
-            <Icon as={I} />
-            <div className="coefficient-name">
-              <span>{label}</span>
-              {key === "route" ? (
-                <small>Маршрут {selectedRoute}</small>
-              ) : key !== "k_global" ? (
-                <small>
-                  {key === "k_weather"
-                    ? "Погодная поправка"
-                    : "Городское событие"}
-                </small>
-              ) : null}
+      {[["weather", "Погода", "WEATHER", "NORMAL"],
+        ["event", "Событие", "EVENT", "NONE"]].map(([key, label, factor, neutral]) => {
+        const available = scenarios(factor);
+        const mode = coeff[`${key}Mode`];
+        return <div className="scenario-factor" key={key}>
+          <div className="scenario-factor-heading"><strong>{label}</strong>
+            <div className="scenario-mode" role="group" aria-label={`${label}: режим`}>
+              {["auto", "manual"].map((choice) => <button key={choice} type="button"
+                className={mode === choice ? "active" : ""}
+                onClick={() => update(`${key}Mode`, choice)}>{choice === "auto" ? "Авто" : "Вручную"}</button>)}
             </div>
-            <input
-              type="range"
-              aria-label={`${label}: коэффициент`}
-              min="0.1"
-              max="5"
-              step="0.01"
-              value={value}
-              onChange={(e) =>
-                setCoeff((c) => ({
-                  ...c,
-                  [key === "route" ? "k_routes" : key]:
-                    key === "route"
-                      ? `${selectedRoute}:${e.target.value}`
-                      : Number(e.target.value),
-                }))
-              }
-            />
-            <output>×{value.toFixed(2)}</output>
           </div>
-        );
+          {mode === "auto" ? <>
+            <select aria-label={`${label}: сценарий`} value={available.some((item) => item.option_code === coeff[`${key}Code`]) ? coeff[`${key}Code`] : neutral}
+              onChange={(e) => update(`${key}Code`, e.target.value)} disabled={!available.length}>
+              <option value={neutral}>{key === "weather" ? "Обычная погода" : "Нет события"}</option>
+              {available.map((item) => <option key={item.option_code} value={item.option_code}>{item.label}</option>)}
+            </select>
+            {!available.length && <small className="scenario-note">{key === "weather" && season === "cold"
+              ? "Для холодного сезона значимого эффекта в данных не обнаружено"
+              : "Подтверждённых сценариев для выбранной даты нет"}</small>}
+          </> : <>
+            <div className="scenario-slider"><input type="range" min="-20" max="20" step="1"
+              aria-label={`${label}: ручная поправка`} value={coeff[`${key}Pct`]}
+              onChange={(e) => update(`${key}Pct`, Number(e.target.value))} />
+              <output>{coeff[`${key}Pct`] > 0 ? "+" : ""}{coeff[`${key}Pct`]}%</output></div>
+            <small className="scenario-note">Ручная гипотеза, не измеренный эффект</small>
+          </>}
+        </div>;
       })}
-      <details className="coefficient-dates">
-        <summary>Периоды действия поправок</summary>
-        {[
-          ["weather", "Погода"],
-          ["event", "Событие"],
-        ].map(([key, label]) => (
-          <div key={key}>
-            <span>{label}</span>
-            <input
-              aria-label={`${label}: с даты`}
-              type="date"
-              max={coeff[`${key}_to`] || undefined}
-              value={coeff[`${key}_from`]}
-              onChange={(e) =>
-                setCoeff((c) => ({ ...c, [`${key}_from`]: e.target.value }))
-              }
-            />
-            <input
-              aria-label={`${label}: по дату`}
-              type="date"
-              min={coeff[`${key}_from`] || undefined}
-              value={coeff[`${key}_to`]}
-              onChange={(e) =>
-                setCoeff((c) => ({ ...c, [`${key}_to`]: e.target.value }))
-              }
-            />
-          </div>
-        ))}
-      </details>
+      {[["seasonPct", "Сезонная поправка"], ["manualPct", "Ручная поправка"]].map(([key, label]) =>
+        <div className="scenario-factor" key={key}>
+          <div className="scenario-factor-heading"><strong>{label}</strong><output>{coeff[key] > 0 ? "+" : ""}{coeff[key]}%</output></div>
+          <input type="range" min="-20" max="20" step="1" aria-label={label}
+            value={coeff[key]} onChange={(e) => update(key, Number(e.target.value))} />
+        </div>)}
       <div className="scenario-summary">
-        <span>
-          База <b>{format(baseline)}</b>
-        </span>
-        <span>
-          Сценарий <b>{format(total)}</b>
-        </span>
-        <span>
-          Δ{" "}
-          <b className="cyan">
-            {baseline ? format((total / baseline - 1) * 100, 1) + "%" : "—"}
-          </b>
-        </span>
+        <span>Базовый прогноз <b>{format(baseline)}</b></span>
+        <span>Сценарный прогноз <b>{format(total)}</b></span>
+        <span>Изменение <b className="cyan">{preview.data?.difference_pct == null ? "—" :
+          `${preview.data.difference_pct > 0 ? "+" : ""}${format(preview.data.difference_pct, 1)}%`}</b></span>
       </div>
-      {forecast?.adjustments?.map((a, i) => (
-        <small className="adjustment" key={i}>
-          {a.label}
-        </small>
-      ))}
+      {preview.error && <small className="scenario-error">{preview.error}</small>}
     </Panel>
   );
 }
@@ -1137,14 +1120,9 @@ function Workspace() {
       hour_to: 23,
     }),
     [coeff, setCoeff] = useState({
-      k_global: 1,
-      k_weather: 1,
-      k_event: 1,
-      k_routes: "",
-      weather_from: "",
-      weather_to: "",
-      event_from: "",
-      event_to: "",
+      weatherMode: "auto", weatherCode: "NORMAL", weatherPct: 0,
+      eventMode: "auto", eventCode: "NONE", eventPct: 0,
+      seasonPct: 0, manualPct: 0,
     }),
     [stopRoute, setStopRoute] = useState(null),
     [admin, setAdmin] = useState(false),
@@ -1154,10 +1132,9 @@ function Workspace() {
     [selectedRoute, setSelectedRoute] = useState("17"),
     [statusFilter, setStatusFilter] = useState("all");
   const deferred = useDebounce(coeff),
-    params = forecastParams(filters, deferred),
+    params = forecastParams(filters, {}, false),
     baseParams = forecastParams(filters, deferred, false),
     forecast = useResource("/forecast", params, revision),
-    base = useResource("/forecast", baseParams, revision),
     history = useResource(
       "/forecast",
       { ...baseParams, source: "history" },
@@ -1176,6 +1153,45 @@ function Workspace() {
     health = useResource("/health"),
     factors = useResource("/factors"),
     scope = useResource("/scope");
+  const warmMonths = factors.data?.seasons?.warm || [4, 5, 6, 7, 8, 9];
+  const selectedSeason = warmMonths.includes(Number(filters.date_from.slice(5, 7))) ? "warm" : "cold";
+  const validCode = (factor, code, neutral) =>
+    factors.data?.options?.some((item) => item.factor_code === factor &&
+      item.option_code === code && item.confirmed === true &&
+      (item.season === selectedSeason || item.season === "all")) ? code : neutral;
+  const scenarioBody = {
+    routes: filters.routes.length ? filters.routes.map(Number) : null,
+    from: filters.date_from,
+    to: filters.date_to,
+    weather: deferred.weatherMode === "auto" ? validCode("WEATHER", deferred.weatherCode, "NORMAL") : "NORMAL",
+    event: deferred.eventMode === "auto" ? validCode("EVENT", deferred.eventCode, "NONE") : "NONE",
+    season_adjustment_pct: deferred.seasonPct,
+    manual_adjustment_pct: Math.round(((1 + (deferred.weatherMode === "manual" ? deferred.weatherPct : 0) / 100) *
+      (1 + (deferred.eventMode === "manual" ? deferred.eventPct : 0) / 100) *
+      (1 + deferred.manualPct / 100) - 1) * 10000) / 100,
+  };
+  const preview = useScenario(scenarioBody, revision, !analytics);
+  const previewForView = (() => {
+    if (!preview.data || analytics || filters.horizon !== "day" ||
+        (filters.hour_from === 0 && filters.hour_to === 23)) return preview;
+    const restrict = (series) => {
+      const points = (series.points || []).filter((point) => {
+        const hour = Number(String(point.key).match(/T(\d{2})/)?.[1] ??
+          String(point.label).match(/^\d{1,2}/)?.[0]);
+        return Number.isFinite(hour) && hour >= filters.hour_from && hour <= filters.hour_to;
+      });
+      return { ...series, points, summary: {
+        ...series.summary,
+        total: points.reduce((sum, point) => sum + Number(point.value || 0), 0),
+        peak: points.reduce((peak, point) => !peak || point.value > peak.value ? point : peak, null),
+      } };
+    };
+    const base = restrict(preview.data.base);
+    const scenario = restrict(preview.data.scenario);
+    return { ...preview, data: { ...preview.data, base, scenario,
+      difference_pct: base.summary.total ?
+        (scenario.summary.total / base.summary.total - 1) * 100 : null } };
+  })();
   useEffect(() => {
     const selector = "details.route-picker, details.date-picker, details.coefficient-dates";
     const closeAll = (except = null) => {
@@ -1219,8 +1235,9 @@ function Workspace() {
     setFilters((f) => ({ ...f, horizon: h, ...period(h, f.date_from) }));
   const routeList = asList(routes.data, "routes"),
     rank = asList(ranking.data, "routes"),
-    events = forecast.data?.network_events || [],
-    series = forecast.data?.points || [],
+    dispatchForecast = previewForView.data?.scenario || forecast.data,
+    events = dispatchForecast?.network_events || [],
+    series = (analytics ? forecast.data : dispatchForecast)?.points || [],
     historyPoints = history.data?.points || [],
     compHistory =
       compare.data?.history?.points ||
@@ -1242,14 +1259,9 @@ function Workspace() {
       hour_to: 23,
     });
     setCoeff({
-      k_global: 1,
-      k_weather: 1,
-      k_event: 1,
-      k_routes: "",
-      weather_from: "",
-      weather_to: "",
-      event_from: "",
-      event_to: "",
+      weatherMode: "auto", weatherCode: "NORMAL", weatherPct: 0,
+      eventMode: "auto", eventCode: "NONE", eventPct: 0,
+      seasonPct: 0, manualPct: 0,
     });
   }
   return (
@@ -1448,7 +1460,7 @@ function Workspace() {
                   </div>
                 }
               >
-                <ResourceError resource={forecast} />
+                <ResourceError resource={previewForView} />
                 <NetworkWarnings events={events} />
                 <LineChart
                   points={series}
@@ -1477,14 +1489,13 @@ function Workspace() {
               <Coefficients
                 coeff={coeff}
                 setCoeff={setCoeff}
-                selectedRoute={selectedRoute}
-                base={base.data}
-                forecast={forecast.data}
                 factors={factors.data}
+                preview={previewForView}
+                date={filters.date_from}
               />
               <Recommendations
                 ranking={rank}
-                forecast={forecast.data}
+                forecast={dispatchForecast}
                 onAction={setToast}
               />
               <Panel
@@ -1493,7 +1504,7 @@ function Workspace() {
               >
                 <span>Прогноз пассажиропотока</span>
                 <strong>
-                  {format(forecast.data?.summary?.peak?.value)}{" "}
+                  {format(dispatchForecast?.summary?.peak?.value)}{" "}
                   <small>в пиковый интервал</small>
                 </strong>
                 <button
@@ -1546,16 +1557,9 @@ function Workspace() {
       )}{" "}
       {scopeOpen && (
         <Modal
-          title="Факторы, коэффициенты и ограничения модели"
+          title="Факторы и ограничения модели"
           onClose={() => setScopeOpen(false)}
         >
-          <Coefficients
-            coeff={coeff}
-            setCoeff={setCoeff}
-            selectedRoute={selectedRoute}
-            base={base.data}
-            forecast={forecast.data}
-          />
           <ResourceError resource={scope} />
           {scope.data && (
             <pre className="scope-text">

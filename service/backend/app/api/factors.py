@@ -21,8 +21,11 @@ what_if (обоснованные значения ползунков), none.
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter
 
+from app import config
 from app.pipeline.network_events import SECONDARY_RULES
 
 router = APIRouter(tags=["данные и применимость"])
@@ -316,8 +319,25 @@ def factors() -> dict:
     by_status: dict = {}
     for source in EXTERNAL_SOURCES:
         by_status[source["status"]] = by_status.get(source["status"], 0) + 1
+    try:
+        catalog = json.loads(config.FACTOR_OPTIONS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        catalog = {"seasons": {}, "options": []}
     return {
         "sources": EXTERNAL_SOURCES,
+        "seasons": catalog.get("seasons", {}),
+        "options": [
+            {
+                **option,
+                "status": (
+                    "confirmed" if option.get("confirmed") else
+                    "manual_scenario" if option.get("source") == "manual_scenario" else
+                    "measured_not_confirmed" if option.get("is_measured") else
+                    "neutral"
+                ),
+            }
+            for option in catalog.get("options", [])
+        ],
         "count": len(EXTERNAL_SOURCES),
         "by_status": by_status,
         "network_impact_rules": NETWORK_IMPACT_RULES,

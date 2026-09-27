@@ -176,6 +176,18 @@ export function demoData(path, p) {
     };
   if (path === "/factors")
     return {
+      seasons: { warm: [4, 5, 6, 7, 8, 9], cold: [1, 2, 3, 10, 11, 12] },
+      options: [
+        ["WEATHER", "RAIN_LIGHT", "warm", "Небольшой дождь", 0.973, true],
+        ["WEATHER", "RAIN", "warm", "Дождь", 0.946, true],
+        ["WEATHER", "RAIN_HEAVY", "warm", "Сильный дождь", 0.897, true],
+        ["WEATHER", "SNOW", "warm", "Снег", 0.958, true],
+        ["WEATHER", "HEAT", "warm", "Жара", 0.964, true],
+        ["EVENT", "MEDIUM", "all", "Среднее событие у линии", 1.05, false],
+        ["EVENT", "MAJOR", "all", "Крупное событие у линии", 1.15, false],
+      ].map(([factor_code, option_code, season, label, value, confirmed]) => ({
+        factor_code, option_code, season, label, value, confirmed,
+      })),
       factors: [
         { name: "Погода", effect: -6.3 },
         { name: "Календарь / сезонность", effect: 11.8 },
@@ -187,4 +199,25 @@ export function demoData(path, p) {
       note: "Демонстрационный режим. Область определения и ограничения модели будут получены из /api/scope после подключения бекенда.",
     };
   return [];
+}
+
+export function demoPreview(body) {
+  const month = Number(body.from.slice(5, 7));
+  const season = month >= 4 && month <= 9 ? "warm" : "cold";
+  const options = demoData("/factors").options;
+  const option = (factor, code) => options.find((item) =>
+    item.factor_code === factor && item.option_code === code &&
+    (item.season === season || item.season === "all") && item.confirmed);
+  const weather = body.weather === "NORMAL" ? null : option("WEATHER", body.weather);
+  const event = body.event === "NONE" ? null : option("EVENT", body.event);
+  if (body.weather !== "NORMAL" && !weather) throw new Error("Для выбранной даты погодный сценарий недоступен");
+  if (body.event !== "NONE" && !event) throw new Error("Для выбранной даты сценарий события недоступен");
+  const params = { horizon: body.from === body.to ? "day" : "month", date_from: body.from, date_to: body.to,
+    routes: body.routes?.join(",") || "" };
+  const base = demoForecast(params);
+  const multiplier = (weather?.value || 1) * (event?.value || 1) *
+    (1 + body.season_adjustment_pct / 100) * (1 + body.manual_adjustment_pct / 100);
+  const scenario = demoForecast({ ...params, k_global: multiplier });
+  return { base, scenario, difference_pct: base.summary.total ?
+    (scenario.summary.total / base.summary.total - 1) * 100 : null };
 }
