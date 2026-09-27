@@ -1611,10 +1611,9 @@ function Workspace() {
                       "Оговорка о разбивке по остановкам ожидается от API."}
                   </span>
                 </div>
-                {filters.routes.includes("5") && (
+                {filters.routes.includes("5") && routeList.find((route) => Number(route.route) === 5)?.note && (
                   <small className="route-note">
-                    Маршрут 5 запущен 16 декабря 2025; до запуска прогноз равен
-                    нулю.
+                    {routeList.find((route) => Number(route.route) === 5).note}
                   </small>
                 )}
               </Panel>
