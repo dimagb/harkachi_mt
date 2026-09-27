@@ -18,10 +18,59 @@ export async function request(path, params = {}, signal, options = {}) {
     );
   }
   if (res.status === 204) return null;
+  // Закешированные ответы бекенда приходят без Content-Type, поэтому
+  // отвергаем только явную HTML-страницу, а остальное разбираем как JSON.
   const type = res.headers.get("content-type") || "";
-  if (!type.includes("json"))
+  const text = await res.text();
+  if (type.includes("html") || /^\s*</.test(text))
     throw new Error("API недоступен: сервер вернул страницу вместо JSON.");
-  return res.json();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("API вернул ответ, который не удалось разобрать как JSON.");
+  }
+}
+export function addDays(iso, n) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+const weekday = (iso) => new Date(`${iso}T00:00:00Z`).getUTCDay();
+// Средний час по дням окна: points — почасовой ряд истории с ключами
+// ГГГГ-ММ-ДДTЧЧ. Делим на число календарных дней окна, а не на число
+// точек: часы без посадок в ряду отсутствуют и среднее бы завышали.
+export function hourProfile(points, from, to, { sameWeekdayAs, keyDate } = {}) {
+  const days = [];
+  for (let d = from; d <= to; d = addDays(d, 1))
+    if (!sameWeekdayAs || weekday(d) === weekday(sameWeekdayAs)) days.push(d);
+  const wanted = new Set(days);
+  const sums = new Map();
+  for (const p of points) {
+    const [d, h] = String(p.key).split("T");
+    if (h == null || !wanted.has(d)) continue;
+    sums.set(h, (sums.get(h) || 0) + (Number(p.value) || 0));
+  }
+  return [...sums.keys()].sort().map((h) => ({
+    key: keyDate ? `${keyDate}T${h}` : h,
+    label: `${h}:00`,
+    value: Math.round((sums.get(h) / Math.max(days.length, 1)) * 10) / 10,
+  }));
+}
+// Прогноз на период длиннее месяца preview отдаёт по дням; для горизонта
+// «год» сворачиваем в месяцы, чтобы шаг совпадал с историей.
+export function toMonths(points) {
+  const months = new Map();
+  for (const p of points) {
+    const k = String(p.key).slice(0, 7);
+    months.set(k, (months.get(k) || 0) + (Number(p.value) || 0));
+  }
+  return [...months].sort().map(([key, value]) => ({ key, label: key, value }));
+}
+export function scenarioFactor(explain = []) {
+  return explain.reduce(
+    (k, step) => (step.factor == null ? k : k * Number(step.factor)),
+    1,
+  );
 }
 export function period(horizon, date = "2025-12-15") {
   const [y, m] = date.split("-");

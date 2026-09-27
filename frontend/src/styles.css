@@ -2306,3 +2306,38 @@ small {
 .tram-symbol svg { position:absolute; visibility:hidden; }
 .tram-symbol::before { content:''; display:block; width:56px; height:68px; flex-shrink:0; background:url('/login-reference.png') -440px -160px / 1280px 720px no-repeat; }
 @media(max-width:650px) { .tram-symbol::before { transform:scale(.85); } }
+
+/* Подсказка демо-доступа на экране входа */
+.login-hint {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #9fb6c8;
+}
+.login-hint b {
+  color: #e5f4ff;
+  font-weight: 600;
+}
+
+/* Источников в /api/factors девять: список прокручивается внутри панели,
+   а не выползает под тепловую карту */
+.factors {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.factor-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.analytics-top > .analytics-factors {
+  min-height: 0;
+  overflow: hidden;
+}
+.heat-empty {
+  background: transparent;
+  outline: 1px dashed rgba(143, 163, 186, 0.18);
+  outline-offset: -1px;
+}

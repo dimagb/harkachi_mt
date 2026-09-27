@@ -43,6 +43,10 @@ import {
   asList,
   format,
   mergeByRoute,
+  addDays,
+  hourProfile,
+  toMonths,
+  scenarioFactor,
 } from "./api";
 import { demoData, demoPreview } from "./demo";
 import { LineChart, Bars, Heatmap } from "./charts";
@@ -100,6 +104,57 @@ function useScenario(body, revision = 0, enabled = true) {
       });
     return () => controller.abort();
   }, [key, revision, enabled]);
+  return state;
+}
+// История для графиков. Прогноз начинается после последнего дня истории
+// (cutoff_date из /api/meta), поэтому «факт на ту же дату» не существует:
+//   day   — средний суточный профиль того же дня недели за 4 недели до среза;
+//   month — последние 31 день истории, по дням, перед прогнозом;
+//   year  — история по месяцам за год выбранной даты.
+// mode="profile" — средний профиль по всем дням (для столбиков «история»).
+function useHistory(filters, cutoff, mode = "line", revision = 0, metaError = "") {
+  const [state, set] = useState({ points: [], loading: true, error: "" });
+  const key = JSON.stringify([filters, cutoff, mode, revision, metaError]);
+  useEffect(() => {
+    if (!cutoff) {
+      // Без даты среза из /api/meta окно истории не построить.
+      set({ points: [], loading: !metaError,
+            error: metaError ? `Нет даты среза истории: ${metaError}` : "" });
+      return;
+    }
+    const c = new AbortController();
+    set({ points: [], loading: true, error: "" });
+    const common = {
+      routes: filters.routes.join(","),
+      source: "history",
+      hour_from: filters.hour_from,
+      hour_to: filters.hour_to,
+    };
+    const year = filters.horizon === "year" || (mode === "profile" && filters.horizon === "month");
+    const from = filters.horizon === "day" || mode === "profile"
+      ? addDays(cutoff, -27) : addDays(cutoff, -30);
+    const params = year
+      ? { ...common, horizon: "year", granularity: "month", split_by_route: true,
+          date_from: `${filters.date_from.slice(0, 4)}-01-01`,
+          date_to: `${filters.date_from.slice(0, 4)}-12-31` }
+      : { ...common, horizon: "day",
+          granularity: filters.horizon === "day" ? "hour" : "day",
+          date_from: from, date_to: cutoff };
+    get("/forecast", params, c.signal)
+      .then((r) => {
+        if (c.signal.aborted) return;
+        let points = r.points || [];
+        if (!year && filters.horizon === "day")
+          points = hourProfile(points, from, cutoff, mode === "profile" ? {} : {
+            sameWeekdayAs: filters.date_from, keyDate: filters.date_from });
+        set({ points, byRoute: r.by_route, loading: false, error: "" });
+      })
+      .catch((e) => {
+        if (!c.signal.aborted && e.name !== "AbortError")
+          set({ points: [], loading: false, error: e.message });
+      });
+    return () => c.abort();
+  }, [key]);
   return state;
 }
 function useDebounce(value) {
@@ -251,6 +306,11 @@ function Login() {
               </button>
             </div>
           </label>
+          <p className="login-hint">
+            Демо-доступ: логин <b>dispatcher</b>, пароль <b>dispatcher</b> —
+            или просто нажмите «Войти», поля необязательны. Форма изменений
+            сети доступна в роли «Администратор».
+          </p>
           <button className="primary login-submit" type="submit">
             Войти в систему <ArrowRight size={23} />
           </button>
@@ -418,13 +478,20 @@ function DateFilter({ filters, setFilters }) {
             type="date"
             aria-label="Начало периода"
             value={filters.date_from}
-            max={filters.date_to}
+            max={filters.horizon === "day" ? undefined : filters.date_to}
             onChange={(e) =>
               e.target.value &&
-              setFilters((f) => ({ ...f, date_from: e.target.value }))
+              // На горизонте «день» период — одни сутки: конец следует за началом.
+              setFilters((f) => ({
+                ...f,
+                date_from: e.target.value,
+                anchor: e.target.value,
+                ...(f.horizon === "day" ? { date_to: e.target.value } : {}),
+              }))
             }
           />
         </label>
+        {filters.horizon !== "day" && (
         <label>
           По
           <input
@@ -438,6 +505,7 @@ function DateFilter({ filters, setFilters }) {
             }
           />
         </label>
+        )}
       </div>
     </details>
   );
@@ -508,11 +576,14 @@ function DataStatus({ meta }) {
     <Panel title="Состояние данных" className="data-status">
       <ResourceError resource={meta} />
       {[
-        [CalendarDays, "Данные по:", m.history_to || m.history?.date_to],
-        [Clock3, "Обновлено:", m.updated_at],
-        [CheckCircle2, "Покрытие:", m.coverage],
-        [Database, "Версия модели:", m.model_version],
-        [Database, "Агрегация:", m.aggregation],
+        [CalendarDays, "Данные по:", m.cutoff_date || m.data?.history_period?.[1]],
+        [Clock3, "Загружено:", m.data?.loaded_at
+          ? new Date(m.data.loaded_at).toLocaleString("ru-RU") : null],
+        [CheckCircle2, "Покрытие:", m.data
+          ? `${m.data.routes?.length ?? "—"} маршрутов, ${format(m.data.forecast_rows)} строк` : null],
+        [Database, "Версия модели:", m.model_version
+          ? `${m.model_version}${m.release_id ? " · " + m.release_id : ""}` : null],
+        [Database, "Агрегация:", m.data ? "маршрут × час" : null],
       ].map(([I, l, v]) => (
         <div key={l}>
           <Icon as={I} />
@@ -529,15 +600,27 @@ function DataStatus({ meta }) {
     </Panel>
   );
 }
-function Factors({ resource, onScope, horizon }) {
-  const factors = asList(resource.data, "factors").filter(
-    (f) => f.name && !/ЗАПОЛНИТЬ/.test(f.name),
-  );
+const SOURCE_STATUS = {
+  confirmed: ["в прогнозе", "cyan"],
+  measured_not_applied: ["измерен, не применён", "yellow-text"],
+  checked_no_effect: ["эффекта нет", ""],
+  stub: ["заготовка", ""],
+};
+function Factors({ resource, meta, onScope, horizon }) {
+  // /api/factors отдаёт источники в sources: название, статус и где применён.
+  // Процентов «эффекта» там нет — эффект описан текстом, он в подсказке.
+  const factors = asList(resource.data, "sources").map((s) => ({
+    name: s.title,
+    status: s.applied === "what_if" && s.status === "confirmed"
+      ? ["what-if", "cyan"] : SOURCE_STATUS[s.status] || [s.status, ""],
+    hint: [s.effect, s.url].filter(Boolean).join(" · "),
+  }));
+  const score = meta?.data?.score;
   return (
     <>
       <Panel
         title="Точность прогноза"
-        info="Показывает, насколько прогноз близок к фактическому пассажиропотоку. Без данных для сравнения точность не рассчитывается."
+        info="Оценка релиза на лидерборде: 1 − WAPE по всем часам, маршрутам и дням 1 ноября — 31 декабря 2025. Одна цифра на весь прогноз, от горизонта не зависит."
         className="accuracy"
       >
         <div className="accuracy-body">
@@ -546,9 +629,10 @@ function Factors({ resource, onScope, horizon }) {
           </div>
           <div>
             <strong>
-              {demo ? { day: 93, month: 91, year: 89 }[horizon] + "%" : "—"}
+              {demo ? { day: 93, month: 91, year: 89 }[horizon] + "%"
+                : score != null ? format(score * 100, 1) + "%" : "—"}
             </strong>
-            <p>Точность прогноза</p>
+            <p>Точность прогноза{score != null && !demo ? " · 1 − WAPE, лидерборд" : ""}</p>
           </div>
         </div>
       </Panel>
@@ -558,6 +642,7 @@ function Factors({ resource, onScope, horizon }) {
         info="Влияние погоды, календаря и городских событий на ожидаемый пассажиропоток."
       >
         <ResourceError resource={resource} />
+        <div className="factor-list">
         {(factors.length
           ? factors
           : [
@@ -566,19 +651,16 @@ function Factors({ resource, onScope, horizon }) {
               { name: "Городские события" },
             ]
         ).map((f, i) => (
-          <div className="factor" key={f.name}>
+          <div className="factor" key={f.name} title={f.hint || ""}>
             <Icon
               as={[CloudRain, CalendarDays, Star][i % 3]}
               className={i === 1 ? "red-text" : i === 2 ? "yellow-text" : ""}
             />
             <span>{f.name}</span>
-            <b className={Number(f.effect) < 0 ? "red-text" : "cyan"}>
-              {f.effect == null
-                ? "—"
-                : `${Number(f.effect) > 0 ? "+" : ""}${f.effect}%`}
-            </b>
+            <b className={f.status?.[1] || ""}>{f.status?.[0] || "—"}</b>
           </div>
         ))}
+        </div>
         <button className="manual-factors" onClick={onScope}>
           <SlidersHorizontal size={19} />
           Ручные коэффициенты <small>индивидуально</small>
@@ -587,90 +669,21 @@ function Factors({ resource, onScope, horizon }) {
     </>
   );
 }
-function HistoricalBars({ filters }) {
-  const [state, setState] = useState({ points: [], loading: true, error: "" });
-  useEffect(() => {
-    const c = new AbortController();
-    setState({ points: [], loading: true, error: "" });
-    const common = {
-      routes: filters.routes.join(","),
-      source: "history",
-      hour_from: filters.hour_from,
-      hour_to: filters.hour_to,
-    };
-    if (filters.horizon === "year") {
-      if (demo) {
-        setState({
-          loading: false,
-          error: "",
-          points: [108, 132, 152, 158, 176].map((v, i) => ({
-            key: String(2021 + i),
-            label: String(2021 + i),
-            value: v * 1e6,
-          })),
-        });
-        return () => c.abort();
-      }
-      Promise.all(
-        [2021, 2022, 2023, 2024, 2025].map(async (year) => {
-          const r = await get(
-            "/forecast",
-            {
-              ...common,
-              horizon: "year",
-              date_from: `${year}-01-01`,
-              date_to: `${year}-12-31`,
-            },
-            c.signal,
-          );
-          return {
-            key: String(year),
-            label: String(year),
-            value: r.summary?.total || 0,
-          };
-        }),
-      )
-        .then((points) => {
-          if (!c.signal.aborted)
-            setState({ points, loading: false, error: "" });
-        })
-        .catch((e) => {
-          if (!c.signal.aborted)
-            setState({ points: [], loading: false, error: e.message });
-        });
-    } else {
-      get(
-        "/forecast",
-        {
-          ...common,
-          horizon: filters.horizon === "month" ? "year" : "day",
-          ...(filters.horizon === "month"
-            ? period("year", filters.date_from)
-            : { date_from: filters.date_from, date_to: filters.date_to }),
-        },
-        c.signal,
-      )
-        .then((r) => {
-          if (!c.signal.aborted)
-            setState({ points: r.points || [], loading: false, error: "" });
-        })
-        .catch((e) => {
-          if (!c.signal.aborted)
-            setState({ points: [], loading: false, error: e.message });
-        });
-    }
-    return () => c.abort();
-  }, [JSON.stringify(filters)]);
+function HistoricalBars({ filters, cutoff, metaError }) {
+  const state = useHistory(filters, cutoff, "profile", 0, metaError);
   return (
     <>
       <ResourceError resource={state} />
       <Bars
         points={state.points}
-        horizon={filters.horizon === "month" ? "year" : filters.horizon}
+        horizon={filters.horizon === "day" ? "day" : "year"}
       />
     </>
   );
 }
+// /api/forecast/routes отдаёт маршруты по номеру; рейтинг и рекомендации —
+// по объёму, маршруты без пассажиров в периоде в рекомендации не попадают.
+const byTotal = (routes) => [...routes].sort((a, b) => (b.total || 0) - (a.total || 0));
 function Ranking({ resource, onRoute, horizon }) {
   return (
     <Panel
@@ -691,7 +704,7 @@ function Ranking({ resource, onRoute, horizon }) {
             </tr>
           </thead>
           <tbody>
-            {asList(resource.data, "routes").map((r, i) => (
+            {byTotal(asList(resource.data, "routes")).map((r, i) => (
               <tr key={r.route} onClick={() => onRoute(String(r.route))}>
                 <td>{i + 1}</td>
                 <td>
@@ -821,7 +834,7 @@ function Events({ events = [], onRoute }) {
   );
 }
 function Recommendations({ ranking, forecast, onAction }) {
-  const rs = ranking.slice(0, 2);
+  const rs = ranking.filter((r) => r.total > 0).slice(0, 2);
   return (
     <Panel
       title="Рекомендации ИИ"
@@ -1150,6 +1163,7 @@ function Workspace() {
       horizon: "day",
       routes: [],
       ...period("day"),
+      anchor: "2025-12-15",
       hour_from: 0,
       hour_to: 23,
     }),
@@ -1169,12 +1183,6 @@ function Workspace() {
     params = forecastParams(filters, {}, false),
     baseParams = forecastParams(filters, deferred, false),
     forecast = useResource("/forecast", params, revision),
-    history = useResource(
-      "/forecast",
-      { ...baseParams, source: "history" },
-      revision,
-    ),
-    compare = useResource("/forecast/compare", baseParams, revision),
     ranking = useResource("/forecast/routes", params, revision),
     routes = useResource("/routes"),
     geometry = useResource("/geometry"),
@@ -1183,10 +1191,12 @@ function Workspace() {
       { ...params, routes: undefined, route: selectedRoute },
       revision,
     ),
-    meta = useResource("/meta"),
+    meta = useResource("/meta", {}, revision),
     health = useResource("/health"),
     factors = useResource("/factors"),
-    scope = useResource("/scope");
+    scope = useResource("/scope"),
+    cutoff = meta.data?.cutoff_date || (demo ? "2025-10-31" : null),
+    history = useHistory(filters, cutoff, "line", revision, meta.error);
   const warmMonths = factors.data?.seasons?.warm || [4, 5, 6, 7, 8, 9];
   const selectedSeason = warmMonths.includes(Number(filters.date_from.slice(5, 7))) ? "warm" : "cold";
   const validCode = (factor, code, neutral) =>
@@ -1266,17 +1276,25 @@ function Workspace() {
     return () => clearTimeout(t);
   }, [toast]);
   const changeHorizon = (h) =>
-    setFilters((f) => ({ ...f, horizon: h, ...period(h, f.date_from) }));
+    setFilters((f) => ({ ...f, horizon: h, ...period(h, f.anchor || f.date_from) }));
   const routeList = asList(routes.data, "routes"),
-    rank = asList(ranking.data, "routes"),
+    rank = byTotal(asList(ranking.data, "routes")),
     dispatchForecast = previewForView.data?.scenario || forecast.data,
     events = dispatchForecast?.network_events || [],
-    series = (analytics ? forecast.data : dispatchForecast)?.points || [],
-    historyPoints = history.data?.points || [],
-    compHistory =
-      compare.data?.history?.points ||
-      compare.data?.actual?.points ||
-      historyPoints;
+    rawSeries = (analytics ? forecast.data : dispatchForecast)?.points || [],
+    series = filters.horizon === "year" ? toMonths(rawSeries) : rawSeries,
+    historyPoints = history.points,
+    historyLabel = {
+      day: `История: ${["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"][new Date(filters.date_from + "T00:00:00Z").getUTCDay()]}, среднее за 4 недели до ${cutoff || "среза"}`,
+      month: `История: 31 день до ${cutoff || "среза"}`,
+      year: "Факт (история)",
+    }[filters.horizon];
+  // XLSX совпадает с экраном: сценарий диспетчерской (именованные опции
+  // и поправки) сводится к одному общему множителю k_global — preview
+  // считает сценарий именно так, умножением базы на факторы из explain.
+  const k = !analytics && preview.data ? scenarioFactor(preview.data.explain) : 1,
+    exportParams = Math.abs(k - 1) > 1e-9
+      ? { ...params, k_global: Math.round(k * 1e6) / 1e6 } : params;
   const openRoute = (r) => {
     setSelectedRoute(r);
     setStopRoute(r);
@@ -1289,6 +1307,7 @@ function Workspace() {
       horizon: "day",
       routes: [],
       ...period("day"),
+      anchor: "2025-12-15",
       hour_from: 0,
       hour_to: 23,
     });
@@ -1336,7 +1355,7 @@ function Workspace() {
                 <DateFilter filters={filters} setFilters={setFilters} />
                 <label>Время суток</label>
                 <ManualHourFilter filters={filters} setFilters={setFilters} />
-                <Export params={params} notify={setToast} />
+                <Export params={exportParams} notify={setToast} />
               </Panel>
               <DataStatus meta={meta} />
               <div
@@ -1398,9 +1417,9 @@ function Workspace() {
                 onRoute={openRoute}
               />
               <div className="sidebar-foot">
-                <Export params={params} notify={setToast} />
+                <Export params={exportParams} notify={setToast} />
                 <small>
-                  Данные до {meta.data?.history_to || "—"}
+                  Данные до {meta.data?.cutoff_date || "—"}
                   <br />
                   Прогноз {meta.data?.forecast_from || "—"} —{" "}
                   {meta.data?.forecast_to || "—"}
@@ -1421,15 +1440,15 @@ function Workspace() {
                 <NetworkWarnings events={events} />
                 <LineChart
                   points={series}
-                  history={
-                    filters.horizon === "year" ? historyPoints : compHistory
-                  }
+                  history={historyPoints}
+                  historyLabel={historyLabel}
                   horizon={filters.horizon}
                 />
               </Panel>
               <aside className="analytics-factors">
                 <Factors
                   resource={factors}
+                  meta={meta}
                   horizon={filters.horizon}
                   onScope={() => setScopeOpen(true)}
                 />
@@ -1441,13 +1460,13 @@ function Workspace() {
                   {
                     day: "Типичный суточный профиль (история)",
                     month: "Сезонность по месяцам (история)",
-                    year: "Сезонность по годам (история)",
+                    year: "История по месяцам (есть только 2025 год)",
                   }[filters.horizon]
                 }
                 info="Показывает повторяющиеся пики и спады пассажиропотока по историческим данным."
                 className="history-panel"
               >
-                <HistoricalBars filters={filters} />
+                <HistoricalBars filters={filters} cutoff={cutoff} metaError={meta.error} />
               </Panel>
               <Panel
                 title={`Тепловая карта: маршрут × ${{ day: "час", month: "день месяца", year: "месяц" }[filters.horizon]}`}
@@ -1459,7 +1478,7 @@ function Workspace() {
                   byRoute={
                     filters.horizon === "year"
                       ? mergeByRoute(
-                          history.data?.by_route,
+                          history.byRoute,
                           forecast.data?.by_route,
                         )
                       : forecast.data?.by_route
@@ -1496,6 +1515,7 @@ function Workspace() {
                 <LineChart
                   points={series}
                   history={historyPoints}
+                  historyLabel={historyLabel}
                   horizon={filters.horizon}
                   dispatch
                 />
@@ -1576,7 +1596,7 @@ function Workspace() {
       {stopRoute && (
         <StopPanel
           route={stopRoute}
-          params={params}
+          params={exportParams}
           onClose={() => setStopRoute(null)}
         />
       )}{" "}

@@ -1,10 +1,21 @@
 import React, { useId, useState } from "react";
 import { format } from "./api";
+const MONTHS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+// Подпись оси по ключу точки: полная подпись API («2025-12-15 00:00»)
+// на 24 делениях накладывается, поэтому на оси — только час, день или месяц.
+function axisLabel(key, horizon, label) {
+  const k = String(key);
+  if (horizon === "day" && /T\d{2}/.test(k)) return k.match(/T(\d{2})/)[1];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(k)) return `${k.slice(8)}.${k.slice(5, 7)}`;
+  if (/^\d{4}-\d{2}$/.test(k)) return MONTHS[Number(k.slice(5)) - 1];
+  return label;
+}
 export function LineChart({
   points = [],
   history = [],
   horizon = "day",
   dispatch = false,
+  historyLabel = "Факт (история)",
 }) {
   const id = useId().replaceAll(":", ""),
     [hover, setHover] = useState(null),
@@ -32,15 +43,11 @@ export function LineChart({
       <div className="legend">
         <span>
           <i className="blue" />
-          Факт (история)
+          {historyLabel}
         </span>
         <span>
           <i className="red" />
           Прогноз{dispatch ? " (с учётом коэффициентов)" : ""}
-        </span>
-        <span>
-          <i className="shade" />
-          Диапазон прогноза
         </span>
       </div>
       <svg
@@ -81,13 +88,13 @@ export function LineChart({
               y2={H - B}
               className="grid"
             />
-            {(keys.length < 32 || i % 2 === 0) && (
+            {(keys.length <= 24 || i % Math.ceil(keys.length / 16) === 0) && (
               <text
                 x={L + (i * iw) / Math.max(keys.length - 1, 1)}
                 y={H - B + 20}
                 textAnchor="middle"
               >
-                {all.find((p) => p.key === key)?.label}
+                {axisLabel(key, horizon, all.find((p) => p.key === key)?.label)}
               </text>
             )}
           </g>
@@ -243,7 +250,10 @@ export function Heatmap({ byRoute = {}, horizon }) {
     })
     .slice(0, 10)
     .map(([r, data]) => [r, Array.isArray(data) ? data : data?.points || []]);
-  const n = Math.max(0, ...rows.map(([, p]) => p.length)),
+  // Колонки — по ключу периода, а не по позиции: у маршрута 5 за год есть
+  // только ноябрь и декабрь, и его клетки должны встать туда, а не в январь.
+  const columns = [...new Set(rows.flatMap(([, ps]) => ps.map((p) => p.key)))].sort(),
+    n = columns.length,
     max = Math.max(1, ...rows.flatMap(([, ps]) => ps.map((p) => p.value)));
   if (!n) return <div className="empty">Нет разбивки по маршрутам</div>;
   const colors = [
@@ -265,22 +275,27 @@ export function Heatmap({ byRoute = {}, horizon }) {
         {rows.map(([r, ps]) => (
           <React.Fragment key={r}>
             <span className="heat-route">{r}</span>
-            {ps.map((p, i) => (
-              <div
-                key={p.key || i}
-                title={`Маршрут ${r}, ${p.label}: ${format(p.value)}`}
-                style={{
-                  background:
-                    colors[Math.min(7, Math.floor((p.value / max) * 8))],
-                }}
-              />
-            ))}
+            {columns.map((key) => {
+              const p = ps.find((x) => x.key === key);
+              return p ? (
+                <div
+                  key={key}
+                  title={`Маршрут ${r}, ${p.label || key}: ${format(p.value)}`}
+                  style={{
+                    background:
+                      colors[Math.min(7, Math.floor((p.value / max) * 8))],
+                  }}
+                />
+              ) : (
+                <div key={key} title={`Маршрут ${r}: нет данных`} className="heat-empty" />
+              );
+            })}
           </React.Fragment>
         ))}
         <span />
-        {rows[0][1].map((p, i) => (
-          <span className="heat-label" key={p.key || i}>
-            {n > 15 && i % 2 ? "" : p.label}
+        {columns.map((key, i) => (
+          <span className="heat-label" key={key}>
+            {n > 15 && i % 2 ? "" : axisLabel(key, horizon, key)}
           </span>
         ))}
       </div>
