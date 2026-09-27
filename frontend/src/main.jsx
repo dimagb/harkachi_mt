@@ -632,7 +632,6 @@ function Factors({ meta, horizon }) {
               {demo ? { day: 93, month: 91, year: 89 }[horizon] + "%"
                 : score != null ? format(score * 100, 1) + "%" : "—"}
             </strong>
-            <p>Точность прогноза</p>
           </div>
         </div>
       </Panel>
