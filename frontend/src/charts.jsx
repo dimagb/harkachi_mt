@@ -31,7 +31,7 @@ export function LineChart({
     iw = W - L - R,
     ih = H - T - B;
   const x = (p) => horizon === "year"
-      ? L + ((Number(String(p.key).slice(5, 7)) - 0.5) * iw) / 12
+      ? L + ((Number(String(p.key).slice(5, 7)) - 1) * iw) / 12
       : L + (keys.indexOf(p.key) * iw) / Math.max(keys.length - 1, 1),
     y = (p) => T + ih * (1 - Number(p.value) / max),
     path = (arr) =>
@@ -44,13 +44,11 @@ export function LineChart({
     new Date(`${lastHistory.key}-01T00:00:00Z`).getUTCMonth() + 1 ===
       new Date(`${start.key}-01T00:00:00Z`).getUTCMonth() &&
     x(start) > x(lastHistory);
-  // Граница между центрами октября и ноября соответствует началу ноября.
-  // Линии соединяются визуально, но точка октября остаётся только фактом.
-  const boundaryX = adjacent ? (x(lastHistory) + x(start)) / 2 : start && x(start);
-  const boundaryY = adjacent ? (y(lastHistory) + y(start)) / 2 : start && y(start);
-  const historyPath = adjacent ? `${path(history)} L${boundaryX},${boundaryY}` : path(history);
+  // Подписи месяцев стоят на их начале: красный ряд начинается строго на ноябре.
+  const boundaryX = start && x(start);
+  const historyPath = path(history);
   const forecastPath = points.length
-    ? `${adjacent ? `M${boundaryX},${boundaryY} L` : ""}${path(points).replace(/^M/, adjacent ? "" : "M")}${horizon === "year" ? ` L${W - R},${y(points.at(-1))}` : ""}`
+    ? `${path(points)}${horizon === "year" ? ` L${W - R},${y(points.at(-1))}` : ""}`
     : "";
   const unit = max > 2e6 ? 1e6 : 1000;
   return (
@@ -129,6 +127,15 @@ export function LineChart({
               filter={`url(#glow${id})`}
             />
           </>
+        )}
+        {adjacent && (
+          <path
+            d={`M${x(lastHistory)},${y(lastHistory)} L${x(start)},${y(start)}`}
+            fill="none"
+            stroke="#8fa3ba"
+            strokeWidth="2"
+            strokeDasharray="4 4"
+          />
         )}
         {[
           { arr: history, color: "#008dff", line: historyPath },
