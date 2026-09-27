@@ -700,7 +700,9 @@ function Coefficients({
     ? "warm" : "cold";
   const options = factors?.options || [];
   const scenarios = (factor) => options.filter((option) =>
-    option.factor_code === factor && option.confirmed === true &&
+    option.factor_code === factor &&
+    (factor === "WEATHER" ? option.confirmed === true :
+      option.confirmed === true || option.status === "manual_scenario" || option.source === "manual_scenario") &&
     (option.season === season || option.season === "all"));
   const baseline = preview.data?.base?.summary?.total;
   const total = preview.data?.scenario?.summary?.total;
@@ -710,31 +712,18 @@ function Coefficients({
       {[["weather", "Погода", "WEATHER", "NORMAL"],
         ["event", "Событие", "EVENT", "NONE"]].map(([key, label, factor, neutral]) => {
         const available = scenarios(factor);
-        const mode = coeff[`${key}Mode`];
         return <div className="scenario-factor" key={key}>
-          <div className="scenario-factor-heading"><strong>{label}</strong>
-            <div className="scenario-mode" role="group" aria-label={`${label}: режим`}>
-              {["auto", "manual"].map((choice) => <button key={choice} type="button"
-                className={mode === choice ? "active" : ""}
-                onClick={() => update(`${key}Mode`, choice)}>{choice === "auto" ? "Авто" : "Вручную"}</button>)}
-            </div>
-          </div>
-          {mode === "auto" ? <>
+          <div className="scenario-factor-heading"><strong>{label}</strong></div>
             <select aria-label={`${label}: сценарий`} value={available.some((item) => item.option_code === coeff[`${key}Code`]) ? coeff[`${key}Code`] : neutral}
               onChange={(e) => update(`${key}Code`, e.target.value)} disabled={!available.length}>
               <option value={neutral}>{key === "weather" ? "Обычная погода" : "Нет события"}</option>
-              {available.map((item) => <option key={item.option_code} value={item.option_code}>{item.label}</option>)}
+              {available.map((item) => <option key={item.option_code} value={item.option_code}>{item.label}{item.confirmed ? "" : " · ручная гипотеза"}</option>)}
             </select>
             {!available.length && <small className="scenario-note">{key === "weather" && season === "cold"
               ? "Для холодного сезона значимого эффекта в данных не обнаружено"
-              : "Подтверждённых сценариев для выбранной даты нет"}</small>}
-          </> : <>
-            <div className="scenario-slider"><input type="range" min="-20" max="20" step="1"
-              aria-label={`${label}: ручная поправка`} value={coeff[`${key}Pct`]}
-              onChange={(e) => update(`${key}Pct`, Number(e.target.value))} />
-              <output>{coeff[`${key}Pct`] > 0 ? "+" : ""}{coeff[`${key}Pct`]}%</output></div>
-            <small className="scenario-note">Ручная гипотеза, не измеренный эффект</small>
-          </>}
+              : "Сценариев для выбранной даты нет"}</small>}
+            {key === "event" && available.some((item) => item.option_code === coeff.eventCode && !item.confirmed) &&
+              <small className="scenario-note">Ручная гипотеза, не измеренный эффект</small>}
         </div>;
       })}
       {[["seasonPct", "Сезонная поправка"], ["manualPct", "Ручная поправка"]].map(([key, label]) =>
@@ -1120,8 +1109,7 @@ function Workspace() {
       hour_to: 23,
     }),
     [coeff, setCoeff] = useState({
-      weatherMode: "auto", weatherCode: "NORMAL", weatherPct: 0,
-      eventMode: "auto", eventCode: "NONE", eventPct: 0,
+      weatherCode: "NORMAL", eventCode: "NONE",
       seasonPct: 0, manualPct: 0,
     }),
     [stopRoute, setStopRoute] = useState(null),
@@ -1157,18 +1145,17 @@ function Workspace() {
   const selectedSeason = warmMonths.includes(Number(filters.date_from.slice(5, 7))) ? "warm" : "cold";
   const validCode = (factor, code, neutral) =>
     factors.data?.options?.some((item) => item.factor_code === factor &&
-      item.option_code === code && item.confirmed === true &&
+      item.option_code === code && (item.confirmed === true ||
+        (factor === "EVENT" && (item.status === "manual_scenario" || item.source === "manual_scenario"))) &&
       (item.season === selectedSeason || item.season === "all")) ? code : neutral;
   const scenarioBody = {
     routes: filters.routes.length ? filters.routes.map(Number) : null,
     from: filters.date_from,
     to: filters.date_to,
-    weather: deferred.weatherMode === "auto" ? validCode("WEATHER", deferred.weatherCode, "NORMAL") : "NORMAL",
-    event: deferred.eventMode === "auto" ? validCode("EVENT", deferred.eventCode, "NONE") : "NONE",
+    weather: validCode("WEATHER", deferred.weatherCode, "NORMAL"),
+    event: validCode("EVENT", deferred.eventCode, "NONE"),
     season_adjustment_pct: deferred.seasonPct,
-    manual_adjustment_pct: Math.round(((1 + (deferred.weatherMode === "manual" ? deferred.weatherPct : 0) / 100) *
-      (1 + (deferred.eventMode === "manual" ? deferred.eventPct : 0) / 100) *
-      (1 + deferred.manualPct / 100) - 1) * 10000) / 100,
+    manual_adjustment_pct: deferred.manualPct,
   };
   const preview = useScenario(scenarioBody, revision, !analytics);
   const previewForView = (() => {
@@ -1259,8 +1246,7 @@ function Workspace() {
       hour_to: 23,
     });
     setCoeff({
-      weatherMode: "auto", weatherCode: "NORMAL", weatherPct: 0,
-      eventMode: "auto", eventCode: "NONE", eventPct: 0,
+      weatherCode: "NORMAL", eventCode: "NONE",
       seasonPct: 0, manualPct: 0,
     });
   }

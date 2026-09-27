@@ -947,15 +947,9 @@ small {
   margin-bottom: 5px;
   font-size: 11px;
 }
-.scenario-factor-heading output,
-.scenario-slider output { color: #dcecf7; font-size: 11px; white-space: nowrap; }
-.scenario-mode { display: flex; gap: 2px; }
-.scenario-mode button { border: 1px solid #17425b; background: #08283d; color: #a5c3d6; border-radius: 3px; padding: 3px 5px; font-size: 10px; }
-.scenario-mode button.active { background: #006bd8; color: white; border-color: #008cff; }
+.scenario-factor-heading output { color: #dcecf7; font-size: 11px; white-space: nowrap; }
 .scenario-factor select { width: 100%; min-height: 30px; font-size: 11px; }
 .scenario-factor input[type="range"] { display: block; width: 100%; accent-color: #1688df; }
-.scenario-slider { display: flex; align-items: center; gap: 6px; }
-.scenario-slider input { min-width: 0; }
 .scenario-note { display: block; font-size: 10px; line-height: 1.35; color: #9fbacf; margin-top: 4px; }
 .scenario-error { display: block; margin: 6px 8px; color: #ff9b9b; font-size: 11px; }
 .coefficient {
