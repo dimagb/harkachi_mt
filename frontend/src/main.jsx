@@ -593,7 +593,7 @@ function DataStatus({ meta }) {
         [Clock3, "Загружено:", m.data?.loaded_at
           ? new Date(m.data.loaded_at).toLocaleString("ru-RU") : null],
         [CheckCircle2, "Покрытие:", m.data
-          ? `${m.data.routes?.length ?? "—"} маршрутов, ${format(m.data.forecast_rows)} строк` : null],
+          ? `${m.data.routes?.length ?? "—"} маршрутов` : null],
         [Database, "Версия модели:", m.model_version
           ? `${m.model_version}${m.release_id ? " · " + m.release_id : ""}` : null],
         [Database, "Агрегация:", m.data ? "маршрут × час" : null],
