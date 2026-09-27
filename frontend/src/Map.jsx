@@ -27,7 +27,7 @@ export default function TramMap({
     [ready, setReady] = useState(false),
     [error, setError] = useState(""),
     [showRoutes, setShowRoutes] = useState(true),
-    [showStops, setShowStops] = useState(true),
+    [showStops, setShowStops] = useState(false),
     [load, setLoad] = useState(true),
     [layers, setLayers] = useState(false),
     [hoveredRoute, setHoveredRoute] = useState(null),
@@ -88,6 +88,7 @@ export default function TramMap({
       m.on("click", "tram-lines", (e) => {
         const route = String(e.features[0].properties.route);
         setFocusedRoute(route);
+        setShowStops(false);
         onClick.current(route);
       });
       m.on("mousemove", "tram-lines", (e) => {

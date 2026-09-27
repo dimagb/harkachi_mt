@@ -23,3 +23,7 @@ test("a higher scenario forecast can move a route into a higher colour band", ()
   assert.equal(routeLoadByHour(profile, 0, 0, 2)[12].band, "high");
   assert.deepEqual(routeLoadByHour({}, 0, 23), {});
 });
+
+test("missing hourly profile is not shown as an empty route", () => {
+  assert.equal(routeLoadByHour({ 11: [{ key: "2025-11", value: 1000 }] }, 6, 8)[11].band, "unknown");
+});

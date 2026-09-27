@@ -1179,7 +1179,7 @@ function Workspace() {
     forecast = useResource("/forecast", params, revision),
     fullDayLoad = useResource(
       "/forecast",
-      { ...params, hour_from: 0, hour_to: 23 },
+      { ...params, hour_from: 0, hour_to: 23, granularity: "hour" },
       revision,
       !analytics && (filters.hour_from !== 0 || filters.hour_to !== 23),
     ),

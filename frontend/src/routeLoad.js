@@ -34,7 +34,7 @@ export function routeLoadByHour(byRoute, hourFrom, hourTo, scenarioFactor = 1) {
     const selected = hourly.slice(hourFrom, hourTo + 1);
     const average = selected.reduce((sum, value) => sum + value, 0) /
       Math.max(selected.length, 1);
-    const ratio = peak > 0 ? average * scenarioFactor / peak : 0;
+    const ratio = peak > 0 ? average * scenarioFactor / peak : NaN;
     output[String(route)] = { ratio, band: loadBand(ratio) };
   }
   return output;
