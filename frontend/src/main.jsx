@@ -442,10 +442,6 @@ function DateFilter({ filters, setFilters }) {
     </details>
   );
 }
-function HourFilter({ filters, setFilters }) {
-  const hours = Array.from({length:24}, (_,i) => i);
-  return <details className="date-picker hour-picker"><summary><Clock3 size={17}/><span>{String(filters.hour_from).padStart(2,"0")}:00 — {String(filters.hour_to).padStart(2,"0")}:59</span><ChevronDown size={13}/></summary><div className="date-options"><label>С часа<select aria-label="С часа" value={filters.hour_from} onChange={e => {const hour=Number(e.target.value); if(Number.isInteger(hour) && hour>=0 && hour<=23) setFilters(f=>({...f,hour_from:hour,hour_to:Math.max(hour,f.hour_to)}));}}>{hours.map(h=><option key={h} value={h}>{String(h).padStart(2,"0")}:00</option>)}</select></label><label>По час<select aria-label="По час" value={filters.hour_to} onChange={e=>{const hour=Number(e.target.value); if(Number.isInteger(hour) && hour>=0 && hour<=23) setFilters(f=>({...f,hour_to:hour,hour_from:Math.min(hour,f.hour_from)}));}}>{hours.map(h=><option key={h} value={h}>{String(h).padStart(2,"0")}:59</option>)}</select></label></div></details>;
-}
 function ManualHourFilter({ filters, setFilters }) {
   const [draft, setDraft] = useState({ from: String(filters.hour_from).padStart(2, "0"), to: String(filters.hour_to).padStart(2, "0") });
   const [error, setError] = useState("");
@@ -1339,7 +1335,7 @@ function Workspace() {
                 <label>{filters.horizon === "day" ? "Дата" : "Период"}</label>
                 <DateFilter filters={filters} setFilters={setFilters} />
                 <label>Время суток</label>
-                <HourFilter filters={filters} setFilters={setFilters} />
+                <ManualHourFilter filters={filters} setFilters={setFilters} />
                 <Export params={params} notify={setToast} />
               </Panel>
               <DataStatus meta={meta} />
