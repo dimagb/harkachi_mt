@@ -53,6 +53,8 @@ class ForecastConfig:
     oof_calibration: dict | None = None    # {"1-7": ratio, ...}
     new_routes: bool = True
     routes: tuple = tuple(config.ROUTES)
+    ensemble: dict = field(default_factory=dict)
+    recompute_foundation: bool = False
 
     @classmethod
     def from_files(cls, mode="production", **overrides):
@@ -62,7 +64,9 @@ class ForecastConfig:
         scale = params.pop("scale", 1.0)
         oof_path = config.ROOT / "configs" / "oof_calibration.json"
         oof = json.loads(oof_path.read_text(encoding="utf-8")) if oof_path.exists() else None
-        return cls(model_params=params, mode=mode, leaderboard_scale=scale, oof_calibration=oof, **overrides)
+        ensemble = overrides.pop("ensemble", final.get("ensemble", {}))
+        return cls(model_params=params, mode=mode, leaderboard_scale=scale, oof_calibration=oof,
+                   ensemble=ensemble, **overrides)
 
 
 def horizon_bucket(h):
@@ -73,6 +77,13 @@ def horizon_bucket(h):
 
 
 def forecast(history, cutoff, start, end, cfg=None, factors=None):
+    """Forecast with a single information cutoff shared by baseline and foundation layers."""
+    cfg = cfg or ForecastConfig.from_files()
+    with events.information_set(pd.Timestamp(cutoff) if cfg.mode == "production" else None):
+        return _forecast(history, cutoff, start, end, cfg, factors)
+
+
+def _forecast(history, cutoff, start, end, cfg, factors):
     """Hourly forecast for [start, end] using only `history` rows dated <= cutoff.
 
     history: full grid with route, date, hour, boardings (src.data.load_history()).
@@ -109,4 +120,8 @@ def forecast(history, cutoff, start, end, cfg=None, factors=None):
             raise ValueError("configs/oof_calibration.json is missing; run scripts/rolling_backtest.py")
         ratio = keys.horizon.map(horizon_bucket).map(cfg.oof_calibration).fillna(1.0).to_numpy()
         pred = pred * ratio
-    return keys.assign(prediction=np.clip(pred, 0, None))
+    result = keys.assign(prediction=np.clip(pred, 0, None))
+    if cfg.ensemble.get("enabled", False):
+        from src.models.chronos_ensemble import apply
+        result = apply(result, train, cutoff, end, cfg)
+    return result

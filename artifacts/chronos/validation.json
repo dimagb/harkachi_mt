@@ -1,0 +1,19 @@
+{
+  "run": "chronos_components_day0.25_shape0.25",
+  "blend": 1.0,
+  "rolling_origins": 8,
+  "rolling_all_delta": 0.0037212719202399883,
+  "rolling_31-60_delta": 0.0023011452989049426,
+  "rolling_min_delta": 0.00015650994852821747,
+  "folds": {
+    "fold_A": 0.00019079707664724672,
+    "fold_B": 0.0021312259833447134,
+    "fold_C": 0.002551685383297207,
+    "fold_D": -0.002635138841193873
+  },
+  "rolling_rule_pass": true,
+  "history_sha256": "315dcd2c164777145e4902baebb3173b9ab58cc3d41140d0a3bdd7fef9dbf3a2",
+  "residuals_sha256": "87aa2eb1d59e7a753798cf9962f480e1bac4a0a2dc68f57abf7ad104b3d60641",
+  "warning": "Overlapping targets used for exploratory selection; no claim of independent unseen validation",
+  "route5": "no pre-cutoff labels, prior uncertainty not validated"
+}

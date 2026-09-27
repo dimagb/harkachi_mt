@@ -23,7 +23,7 @@ def history():
 
 
 def production_cfg():
-    return ForecastConfig.from_files(mode="production")
+    return ForecastConfig.from_files(mode="production", ensemble={})
 
 
 def test_astro_matches_open_meteo():

@@ -1,0 +1,6 @@
+{
+  "score_rows": 2054,
+  "model_blend_combinations": 192,
+  "families": 69,
+  "warning": "Overlapping historical targets reused for exploratory selection; not independent trials or hidden leaderboard scores."
+}

@@ -1,14 +1,15 @@
 {
-  "release_id": "hackathon-v7",
-  "model_version": "statistical-v6",
+  "release_id": "hackathon-v8",
+  "model_version": "decomposition-chronos2-v1",
   "schema_version": "1.0",
   "mode": "leaderboard",
-  "zero_routes": [5],
+  "zero_routes": [],
   "scored_forecast": {
-    "score": 0.88987,
-    "forecast_md5": "96b297e84e18ae66410fc6831aaa2f6b",
-    "code_git_sha": "3d48343d7c3158ff68aef8ffb36dafbed6cf1ac0",
-    "note": "md5 of the jury CSV (route;date;hour;prediction, LF line endings) that received this score; release_metadata.score is filled only if the built forecast has exactly this hash. code_git_sha: the commit from which build_release --require-clean rebuilt exactly this forecast; copied from release_metadata in release/forecast_release.duckdb so the service (no DuckDB) can report it"
+    "score": 0.90268,
+    "forecast_md5": "a2a872c04316e64e41ad2ac7940cd45c",
+    "code_git_sha": null,
+    "score_source": "user-reported leaderboard evaluation on 2026-09-27, ordered candidate comparison",
+    "note": "Score is shown only when the exact CSV md5 matches. Promoted locally from the scored nightly candidate; integration is not committed, so no clean reproduction commit is claimed. Source hashes and pretrained revision are recorded in artifacts/chronos."
   },
-  "comment": "mode=leaderboard: all published network events + final calibration x1.012 (the hackathon release); mode=production: only information known at the cutoff, no calibration (for forecasts of new periods). zero_routes: team decision (route 5 = 0)."
+  "comment": "leaderboard is explicit EX_POST: restoration of routes 7/50 from Nov15, launch of route5 from Dec16 18:00, historical calibration x1.012, 25% Chronos daily demand and 25% hourly shares. production uses only announcements known by cutoff and no leaderboard calibration. No hidden Nov-Dec demand labels or observed fleet inputs are used. Previous release preserved in release/archive/hackathon-v7."
 }

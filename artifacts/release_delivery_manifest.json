@@ -1,0 +1,42 @@
+{
+  "release_id": "hackathon-v8",
+  "model_version": "decomposition-chronos2-v1",
+  "score": 0.90268,
+  "scored_submission_md5": "a2a872c04316e64e41ad2ac7940cd45c",
+  "prepared_at_moscow": "2026-09-27T15:09:06.804438+03:00",
+  "checks": {
+    "ML_tests_passed": 20,
+    "ML_test_seconds": 232.51,
+    "targeted_snapshot_recheck_passed": 6,
+    "ASGI_API_checks_passed": 9,
+    "offline_delivery_copy_without_night": true,
+    "foundation_imports_prohibited_in_offline_build": true,
+    "submission_service_duckdb_identical": true,
+    "previous_release_hashes_preserved": true
+  },
+  "limitations": {
+    "mode": "EX_POST official network announcements and historical calibration; production is separate",
+    "code_status": "local uncommitted integration; no clean reproduction commit claimed",
+    "deployment": "service data updated and ASGI tested; no live deployment/restart or new load test",
+    "github": "no remote operations during integration",
+    "scope": "files created/modified only inside project; incomplete fare ensemble excluded"
+  },
+  "sha256": {
+    "release/submission.csv": "215435b58fe52db3b8c6a69bab9c002165678c0b72dc387f59411dad1a690f58",
+    "service/data/submission.csv": "215435b58fe52db3b8c6a69bab9c002165678c0b72dc387f59411dad1a690f58",
+    "release/forecast_release.duckdb": "af4b8bf51af93596aba13dd2d4e516e23f1fa8eaafd9f5b77648ce6626992fe6",
+    "configs/release.json": "0f9bbaa49c2f493564d2a347192ee229af45c00a4cf340d87605df6f5b8e2c99",
+    "configs/final_model.json": "01fb8e08a5735df56d392dc2462e5518f9ebc7ab753e24b653159fb5dca5880d",
+    "src/models/chronos_ensemble.py": "990f655743e5ecf0f1a51dfb4b2ecb7e9409ce79a2c6a9196f1f3a9bf78d9d7f",
+    "src/pipeline.py": "98a231aa00ba92b0c19e4b9b34a0fd7bd815d0df550c71e741ef8341f96864e4",
+    "src/events.py": "3aa15ed474bc6e9c6d2bfc90fa4693d401538158d9986ab1c198279cd6a41851",
+    "ml/build_release.py": "d80080a48d043ecc6c898f571e72f5c79bb33446e17e05a878ee4cb2274e16a5",
+    "ml/refresh_chronos.py": "dc784459c5477c7ae7581c8871d7bbc06c9813da77e28961fd778fd21138f649",
+    "ml/verify_release.py": "d392e8ea722d1881bc586a5cb4f87d32ad7c20da3f0d7e3b5a1570cb34f10d7c",
+    "requirements-ml.txt": "3b534bf8486bfaf7479016da3173563413e1152abd50368108fdd7734d85bc42",
+    "requirements-foundation.txt": "c314270026d9f2f49f6b1804de1618de60a43fa26baf4539569e46f0bf53890a",
+    "artifacts/chronos/leaderboard_20251031.csv": "d50f73eea83131d2bce35d33f55a2a3ba2058f6703d4a7f144f1b05e925a27ec",
+    "artifacts/chronos/production_20251031.csv": "b22b7b443fe13fa5e755ce3813d4a3e758f189b5de9290f0640b538445d872e3",
+    "artifacts/chronos/rolling_predictions.csv.gz": "87aa2eb1d59e7a753798cf9962f480e1bac4a0a2dc68f57abf7ad104b3d60641"
+  }
+}

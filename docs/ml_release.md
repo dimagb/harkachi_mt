@@ -35,7 +35,7 @@ python -m ml.build_release --data /data --output /data/forecast_release.duckdb
 python -m ml.build_release --data /data --runtime /data/runtime.duckdb --output /data/forecast_release.duckdb
 
 # прогноз следующего периода (история до 31.12.2025 в labels/*.csv)
-python -m ml.build_release --data /data --cutoff 2025-12-31 --from 2026-01-01 --to 2026-02-28 --output /data/forecast_release.duckdb
+python -m ml.build_release --data /data --cutoff 2025-12-31 --from 2026-01-01 --to 2026-02-28 --mode production --output /data/forecast_release.duckdb
 
 # доказательства: перетекание спроса, ablation внешних источников, rolling backtest
 python -m ml.transfer_experiment
@@ -46,6 +46,8 @@ python scripts/rolling_backtest.py
 `--data` — папка с `labels/labels_day_train.csv`, `labels/labels_day_test.csv` (плюс любые новые месяцы
 в `labels/*.csv`) и необязательно `external/` с внешними источниками.
 Параметры `--cutoff`, `--from`, `--to` позволяют собрать прогноз на любой период.
+Новый период требует requirements-foundation.txt и повторного инференса Chronos;
+старые компоненты не переносятся на изменённую историю. Поддержан календарь 2025–2026.
 Настройки релиза — в `configs/release.json`, параметры модели — в `configs/final_model.json`.
 
 Шаги сборки:
@@ -65,7 +67,7 @@ python scripts/rolling_backtest.py
 | `forecast_points` | `route`, `date`, `hour`, `model_prediction`; ключ `(route, date, hour)` |
 | `factor_options` | `factor_type`, `option_code`, `season`, `value`, `label`, `source` + `is_measured`, `n_days`, `ci_low`, `ci_high`, `significant`, `confirmed`, `condition`, `method` |
 | `network_impact_rules` | `event_type`, `source_route`, `target_route`, `factor`, `source` — одно измеренное правило: FULL_CLOSURE 17 → 11 × 1.1079 |
-| `forecast_intervals` (необязательная) | `route`, `date`, `hour`, `p10`, `p90` — эмпирический 80%-интервал: квантили «факт / прогноз» из rolling backtest по корзине горизонта и типу часов; охват leave-one-origin-out 0.79 |
+| `forecast_intervals` (необязательная) | `route`, `date`, `hour`, `p10`, `p90` — эмпирический 80%-интервал: квантили «факт / прогноз» из rolling backtest по корзине горизонта и типу часов; охват указан в метаданных текущей сборки; у маршрута 5 не проверен |
 
 **Один релиз — один показываемый прогноз.**
 - `score` заполняется, только если md5 прогноза (CSV для жюри) совпадает с `scored_forecast.forecast_md5`
@@ -75,6 +77,15 @@ python scripts/rolling_backtest.py
   и по этому SHA релиз не воспроизвести; `--require-clean` в таком случае не даёт собрать релиз.
 - Калибровка ×1.012 — часть единственного релиза (`calibration`), подобрана на тестовом периоде.
   Отдельных релизов «для скора» и «для сервиса» нет.
+
+## Chronos в текущем релизе
+`src/models/chronos_ensemble.py` независимо смешивает дневной объём и доли часов
+с весами 0.25. `artifacts/chronos` содержит проверенные frozen-компоненты,
+хеши истории/источников и остатки восьми rolling-срезов для интервалов.
+События имеют ревизии: раннее окончание ремонта 30 ноября заменяется на
+14 ноября только после публикации уточнения 15 ноября, либо в EX_POST режиме.
+Интервалы этого ансамбля эмпирические, не гарантируют заданное покрытие.
+Для новой истории без новых hybrid-backtests интервалы — статистический proxy.
 
 ## Что уже внутри `model_prediction`
 | Компонент | Внутри | Backend применяет ещё раз |
@@ -169,13 +180,9 @@ FULL_CLOSURE маршрута 17: `прогноз(11) × 1.1079`. Для ост�
 > `secondary_effects` с доказательством и оговоркой; без событий ответы байт в байт прежние.
 
 ## Маршрут 5
-Решение команды: `ZERO_ROUTES = {5}` — маршрут 5 в релизе = 0. Score релиза — **0.88987** (> 0.88).
-Механизм cold start нового маршрута (`effect_type = new_route` в `data/external/network_events.csv`,
-`src/models/cold_start.py`) остаётся для будущих запусков маршрутов; для маршрута 5 он перекрыт `ZERO_ROUTES`.
-
-Лучший результат команды на лидерборде — **0.89447**: вариант с cold start маршрута 5 от аналога
-с 16.12.2025. Эффект измерен (+0.0046), но в сданный релиз не взят. В зачёт идёт лучший результат
-за всё время, поэтому по критерию 1 это ничего не меняет: оба числа выше 0.88.
+Текущий `hackathon-v8`: zero_routes пуст; до 16.12.2025 18:00 нули,
+затем prior 0.7 × статистический прогноз маршрута 25. Chronos этот prior
+не меняет. Score 0.90268 привязан к точному CSV; архивный v7 имеет score 0.88987.
 
 ## Внешние данные в релизе
 - Производственный календарь 2025–2026 (постановления № 1335 и № 1466) — в прогнозе.
