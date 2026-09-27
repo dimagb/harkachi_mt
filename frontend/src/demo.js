@@ -187,7 +187,6 @@ export function demoData(path, p) {
         ["EVENT", "MAJOR", "all", "Крупное событие у линии", 1.15, false],
       ].map(([factor_code, option_code, season, label, value, confirmed]) => ({
         factor_code, option_code, season, label, value, confirmed,
-        status: factor_code === "EVENT" ? "manual_scenario" : "confirmed",
       })),
       factors: [
         { name: "Погода", effect: -6.3 },
@@ -208,8 +207,7 @@ export function demoPreview(body) {
   const options = demoData("/factors").options;
   const option = (factor, code) => options.find((item) =>
     item.factor_code === factor && item.option_code === code &&
-    (item.season === season || item.season === "all") &&
-    (factor === "EVENT" || item.confirmed));
+    (item.season === season || item.season === "all") && item.confirmed);
   const weather = body.weather === "NORMAL" ? null : option("WEATHER", body.weather);
   const event = body.event === "NONE" ? null : option("EVENT", body.event);
   if (body.weather !== "NORMAL" && !weather) throw new Error("Для выбранной даты погодный сценарий недоступен");
