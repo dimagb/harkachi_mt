@@ -3,6 +3,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Layers, LocateFixed } from "lucide-react";
 import { LOAD_COLORS, routeMatchesLoad } from "./routeLoad";
+import { stopSegments } from "./stopSegments";
 
 const loadColor = [
   "match", ["get", "loadBand"],
@@ -31,6 +32,7 @@ export default function TramMap({
     [showRoutes, setShowRoutes] = useState(true),
     [showStops, setShowStops] = useState(false),
     [load, setLoad] = useState(true),
+    [showStopSegments, setShowStopSegments] = useState(true),
     [layers, setLayers] = useState(false),
     [hoveredRoute, setHoveredRoute] = useState(null),
     [focusedRoute, setFocusedRoute] = useState(null);
@@ -92,20 +94,25 @@ export default function TramMap({
           "Не удалось загрузить часть карты OpenFreeMap. Проверьте подключение к сети.",
         ),
       );
-      m.on("click", "tram-lines", (e) => {
+      const selectRoute = (e) => {
         const route = String(e.features[0].properties.route);
         setFocusedRoute(route);
         setShowStops(false);
         onClick.current(route);
-      });
-      m.on("mousemove", "tram-lines", (e) => {
+      };
+      const hoverRoute = (e) => {
         m.getCanvas().style.cursor = "pointer";
         setHoveredRoute(String(e.features[0].properties.route));
-      });
-      m.on("mouseleave", "tram-lines", () => {
+      };
+      const leaveRoute = () => {
         m.getCanvas().style.cursor = "";
         setHoveredRoute(null);
-      });
+      };
+      for (const layer of ["tram-lines", "tram-segment-lines"]) {
+        m.on("click", layer, selectRoute);
+        m.on("mousemove", layer, hoverRoute);
+        m.on("mouseleave", layer, leaveRoute);
+      }
     } catch {
       setError("Браузер не поддерживает интерактивную карту WebGL.");
     }
@@ -219,6 +226,26 @@ export default function TramMap({
         },
       });
     }
+    const segments = focusedRoute && showStopSegments
+      ? data.features.flatMap((feature) =>
+          String(feature.properties.route) === focusedRoute
+            ? stopSegments(feature, stops) : [])
+      : [];
+    const segmentData = { type: "FeatureCollection", features: segments };
+    if (m.getSource("tram-segments")) m.getSource("tram-segments").setData(segmentData);
+    else {
+      m.addSource("tram-segments", { type: "geojson", data: segmentData });
+      m.addLayer({
+        id: "tram-segment-casing", type: "line", source: "tram-segments",
+        paint: { "line-color": "#00111d", "line-width": 11,
+          "line-offset": ["get", "laneOffset"] },
+      });
+      m.addLayer({
+        id: "tram-segment-lines", type: "line", source: "tram-segments",
+        paint: { "line-color": loadColor, "line-width": 7,
+          "line-offset": ["get", "laneOffset"] },
+      });
+    }
     if (!m.getLayer("tram-labels")) m.addLayer({
       id: "tram-labels",
       type: "symbol",
@@ -238,7 +265,8 @@ export default function TramMap({
       },
     });
     for (const name of ["tram-lines", "tram-glow", "tram-casing",
-      "tram-focus", "tram-focus-casing", "tram-labels"])
+      "tram-focus", "tram-focus-casing", "tram-labels",
+      "tram-segment-casing", "tram-segment-lines"])
       m.setLayoutProperty(name, "visibility", showRoutes ? "visible" : "none");
     m.setLayoutProperty(
       "tram-stops",
@@ -254,7 +282,8 @@ export default function TramMap({
     );
     m.setPaintProperty("tram-glow", "line-color", load ? loadColor : "#0095ff");
     m.setPaintProperty("tram-focus", "line-color", load ? loadColor : "#0095ff");
-  }, [ready, geometry, stops, routeLoads, showRoutes, showStops, load, selectedRoutes.join(","), loadBandFilter]);
+  }, [ready, geometry, stops, routeLoads, showRoutes, showStops, showStopSegments,
+    focusedRoute, load, selectedRoutes.join(","), loadBandFilter]);
   useEffect(() => {
     if (focusedRoute && !matchesRoute(focusedRoute)) setFocusedRoute(null);
   }, [focusedRoute, loadBandFilter, routeLoads, selectedRoutes.join(",")]);
@@ -273,6 +302,9 @@ export default function TramMap({
     .map((f) => Number(f.properties?.route)))]
     .filter(Number.isFinite).sort((a, b) => a - b)
     .filter(matchesRoute);
+  const hasStopSegments = focusedRoute && (geometry?.features || []).some((feature) =>
+    String(feature.properties?.route) === focusedRoute &&
+    stopSegments(feature, stops).length > 0);
   return (
     <section className="map panel">
       <div ref={el} className="map-canvas" />
@@ -298,6 +330,11 @@ export default function TramMap({
             Показать остановки
           </label>
           <label>
+            <input type="checkbox" checked={showStopSegments}
+              onChange={(e) => setShowStopSegments(e.target.checked)} />
+            Оценка по остановкам
+          </label>
+          <label>
             <input
               type="checkbox"
               checked={load}
@@ -315,7 +352,11 @@ export default function TramMap({
         {routeNumbers.map((route) => <button key={route} type="button"
           aria-label={`Выделить маршрут ${route}`}
           aria-pressed={focusedRoute === String(route)}
-          onClick={() => setFocusedRoute((current) => current === String(route) ? null : String(route))}
+          onClick={() => {
+            setFocusedRoute((current) => current === String(route) ? null : String(route));
+            setShowStops(false);
+            onClick.current(String(route));
+          }}
           onMouseEnter={() => setHoveredRoute(String(route))}
           onMouseLeave={() => setHoveredRoute(null)}
           style={{ borderColor: load ? LOAD_COLORS[routeLoads[String(route)]?.band || "unknown"] : "#0095ff" }}>
@@ -344,6 +385,17 @@ export default function TramMap({
         </div>
         <small>Относительно пика маршрута · без данных о вместимости вагонов</small>
       </div>}
+      {showRoutes && showStopSegments && hasStopSegments && (
+        <div className="map-stop-legend" aria-label="Оценочные посадки по остановкам">
+          <b>Маршрут {focusedRoute} · оценочные посадки</b>
+          <div className="map-load-legend-items">
+            {[["low", "Низкие"], ["moderate", "Умеренные"],
+              ["busy", "Повышенные"], ["high", "Высокие"]].map(([band, label]) =>
+              <span key={band}><i style={{ backgroundColor: LOAD_COLORS[band] }} />{label}</span>)}
+          </div>
+          <small>Относительно остановок маршрута · не заполненность вагона</small>
+        </div>
+      )}
       {(error || demo) && (
         <div className="map-notice">
           {error ||

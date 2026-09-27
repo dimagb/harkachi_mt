@@ -880,6 +880,21 @@ small {
 .map-load-legend-items span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .map-load-legend-items i { width: 12px; height: 5px; border-radius: 3px; }
 .map-load-legend small { display: block; margin-top: 4px; color: #9bb5c4; font-size: 9px; }
+.map-stop-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 117px;
+  max-width: min(360px, calc(100% - 20px));
+  padding: 9px 11px;
+  background: #001c2bf0;
+  border: 1px solid #176277;
+  border-radius: 5px;
+  color: #d7e7ef;
+  font-size: 10px;
+}
+.map-stop-legend b { display: block; margin-bottom: 6px; font-size: 11px; }
+.map-stop-legend .map-load-legend-items i { width: 16px; }
+.map-stop-legend small { display: block; margin-top: 6px; color: #9bb5c4; }
 .map-notice {
   position: absolute;
   top: 52px;
