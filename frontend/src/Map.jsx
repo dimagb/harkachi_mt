@@ -2,10 +2,21 @@ import React, { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Layers, LocateFixed } from "lucide-react";
+import { LOAD_COLORS } from "./routeLoad";
+
+const loadColor = [
+  "match", ["get", "loadBand"],
+  "low", LOAD_COLORS.low,
+  "moderate", LOAD_COLORS.moderate,
+  "busy", LOAD_COLORS.busy,
+  "high", LOAD_COLORS.high,
+  LOAD_COLORS.unknown,
+];
+
 export default function TramMap({
   geometry,
   stops = [],
-  ranking = [],
+  routeLoads = {},
   onRoute,
   demo,
   selectedRoutes = [],
@@ -103,9 +114,7 @@ export default function TramMap({
         ...f,
         properties: {
           ...f.properties,
-          share:
-            ranking.find((r) => String(r.route) === String(f.properties.route))
-              ?.share || 0,
+          loadBand: routeLoads[String(f.properties.route)]?.band || "unknown",
         },
       })),
     };
@@ -117,7 +126,7 @@ export default function TramMap({
         type: "line",
         source: "trams",
         paint: {
-          "line-color": "#28d0b1",
+          "line-color": loadColor,
           "line-width": 9,
           "line-opacity": 0.12,
         },
@@ -127,26 +136,8 @@ export default function TramMap({
         type: "line",
         source: "trams",
         paint: {
-          "line-color": [
-            "interpolate",
-            ["linear"],
-            ["get", "share"],
-            0,
-            "#30d8aa",
-            0.1,
-            "#ffcc65",
-            0.2,
-            "#ff4053",
-          ],
-          "line-width": [
-            "interpolate",
-            ["linear"],
-            ["get", "share"],
-            0,
-            2,
-            0.25,
-            6,
-          ],
+          "line-color": loadColor,
+          "line-width": 4,
         },
       });
     }
@@ -186,20 +177,11 @@ export default function TramMap({
       "tram-lines",
       "line-color",
       load
-        ? [
-            "interpolate",
-            ["linear"],
-            ["get", "share"],
-            0,
-            "#30d8aa",
-            0.1,
-            "#ffcc65",
-            0.2,
-            "#ff4053",
-          ]
+        ? loadColor
         : "#0095ff",
     );
-  }, [ready, geometry, stops, ranking, showRoutes, showStops, load, selectedRoutes.join(",")]);
+    m.setPaintProperty("tram-glow", "line-color", load ? loadColor : "#0095ff");
+  }, [ready, geometry, stops, routeLoads, showRoutes, showStops, load, selectedRoutes.join(",")]);
   return (
     <section className="map panel">
       <div ref={el} className="map-canvas" />
@@ -230,7 +212,7 @@ export default function TramMap({
               checked={load}
               onChange={(e) => setLoad(e.target.checked)}
             />
-            Загрузка вагонов
+            Загрузка маршрутов
           </label>
           <button onClick={() => setLayers(!layers)}>
             <Layers size={15} />
@@ -244,9 +226,17 @@ export default function TramMap({
           <br />
           Маршруты и остановки: данные API
           <br />
-          Цвет линии: доля пассажиропотока
+          Цвет линии: нагрузка относительно пикового часа каждого маршрута
         </div>
       )}
+      {load && showRoutes && <div className="map-load-legend" aria-label="Уровни нагрузки маршрутов">
+        <div className="map-load-legend-items">
+          {[["low", "Почти пусто"], ["moderate", "Небольшая"],
+            ["busy", "Средняя"], ["high", "Высокая"]].map(([band, label]) =>
+            <span key={band}><i style={{ backgroundColor: LOAD_COLORS[band] }} />{label}</span>)}
+        </div>
+        <small>Относительно пика маршрута · без данных о вместимости вагонов</small>
+      </div>}
       {(error || demo) && (
         <div className="map-notice">
           {error ||

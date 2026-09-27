@@ -839,6 +839,22 @@ small {
   border-radius: 5px;
   line-height: 1.6;
 }
+.map-load-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 55px;
+  max-width: calc(100% - 60px);
+  padding: 6px 8px;
+  background: #001c2be8;
+  border: 1px solid #104254;
+  border-radius: 3px;
+  color: #d7e7ef;
+  font-size: 10px;
+}
+.map-load-legend-items { display: flex; flex-wrap: wrap; gap: 5px 12px; }
+.map-load-legend-items span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.map-load-legend-items i { width: 12px; height: 5px; border-radius: 3px; }
+.map-load-legend small { display: block; margin-top: 4px; color: #9bb5c4; font-size: 9px; }
 .map-notice {
   position: absolute;
   top: 52px;

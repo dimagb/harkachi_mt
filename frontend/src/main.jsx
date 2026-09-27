@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
 import {
@@ -52,6 +52,7 @@ import {
 import { demoData, demoPreview } from "./demo";
 import { LineChart, Bars, Heatmap } from "./charts";
 import TramMap from "./Map";
+import { routeLoadByHour } from "./routeLoad";
 import "./styles.css";
 
 const demo =
@@ -1250,6 +1251,12 @@ function Workspace() {
     params = forecastParams(filters, {}, false),
     baseParams = forecastParams(filters, deferred, false),
     forecast = useResource("/forecast", params, revision),
+    fullDayLoad = useResource(
+      "/forecast",
+      { ...params, hour_from: 0, hour_to: 23 },
+      revision,
+      !analytics && (filters.hour_from !== 0 || filters.hour_to !== 23),
+    ),
     routes = useResource("/routes"),
     geometry = useResource("/geometry"),
     stops = useResource(
@@ -1329,6 +1336,20 @@ function Workspace() {
       difference_pct: base.summary.total ?
         (scenario.summary.total / base.summary.total - 1) * 100 : null } };
   })();
+  const routeLoads = useMemo(() => {
+    const customHours = filters.hour_from !== 0 || filters.hour_to !== 23;
+    const profile = customHours ? fullDayLoad : forecast;
+    const baseline = Number(preview.data?.base?.summary?.total);
+    const scenario = Number(preview.data?.scenario?.summary?.total);
+    const factor = baseline > 0 && Number.isFinite(scenario) ? scenario / baseline : 1;
+    return routeLoadByHour(
+      profile.loading ? null : profile.data?.by_route,
+      filters.hour_from,
+      filters.hour_to,
+      factor,
+    );
+  }, [fullDayLoad.data, fullDayLoad.loading, forecast.data, forecast.loading,
+    preview.data, filters.hour_from, filters.hour_to]);
   useEffect(() => {
     const selector = "details.route-picker, details.date-picker, details.coefficient-dates";
     const closeAll = (except = null) => {
@@ -1602,7 +1623,7 @@ function Workspace() {
                 geometry={geometry.data}
                 selectedRoutes={filters.routes}
                 stops={asList(stops.data, "stops")}
-                ranking={rank}
+                routeLoads={routeLoads}
                 onRoute={openRoute}
                 demo={demo}
               />
