@@ -1328,7 +1328,7 @@ small {
 .login-page {
   height: 100vh;
   min-height: 650px;
-  background: #00121e url("/login-reference.png") center center/cover no-repeat;
+  background: #00121e url("/login-background.png") center center/cover no-repeat;
   font-family: "Roboto", Arial, sans-serif;
   position: relative;
 }
