@@ -37,6 +37,9 @@ export function LineChart({
       arr.map((p, i) => `${i ? "L" : "M"}${x(p)},${y(p)}`).join(" ");
   if (!all.length)
     return <div className="empty">Нет данных за выбранный период</div>;
+  // Первая настоящая точка прогноза: «мостовая» точка (bridge) — это
+  // последний месяц истории, отметка начала прогноза ставится не на неё.
+  const start = points.find((p) => !p.bridge);
   const unit = max > 2e6 ? 1e6 : 1000;
   return (
     <div className="chart-wrap">
@@ -129,7 +132,7 @@ export function LineChart({
                 dispatch && color === "#ff3656" ? "8 5" : undefined
               }
             />
-            {arr.map((p) => (
+            {arr.filter((p) => !p.bridge).map((p) => (
               <circle
                 key={p.key}
                 cx={x(p)}
@@ -145,17 +148,17 @@ export function LineChart({
             ))}
           </g>
         ))}
-        {horizon === "year" && points.length > 0 && (
+        {horizon === "year" && start && (
           <g>
             <line
-              x1={x(points[0])}
-              x2={x(points[0])}
+              x1={x(start)}
+              x2={x(start)}
               y1={T}
               y2={H - B}
               stroke="#8fa3ba"
               strokeDasharray="5 4"
             />
-            <text x={Math.min(x(points[0]) + 7, W - 130)} y={T + 8}>
+            <text x={Math.min(x(start) + 7, W - 130)} y={T + 8}>
               Начало прогноза
             </text>
           </g>

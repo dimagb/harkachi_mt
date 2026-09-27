@@ -47,6 +47,7 @@ import {
   hourProfile,
   toMonths,
   scenarioFactor,
+  withBridge,
 } from "./api";
 import { demoData, demoPreview } from "./demo";
 import { LineChart, Bars, Heatmap } from "./charts";
@@ -59,10 +60,14 @@ const demo =
 if (demo) sessionStorage.setItem("tram-demo", "1");
 const get = (path, p = {}, signal) =>
   demo ? Promise.resolve(demoData(path, p)) : request(path, p, signal);
-function useResource(path, params = {}, revision = 0) {
+function useResource(path, params = {}, revision = 0, enabled = true) {
   const [state, set] = useState({ data: null, loading: true, error: "" });
   const key = query(params);
   useEffect(() => {
+    if (!enabled) {
+      set({ data: null, loading: false, error: "" });
+      return;
+    }
     const controller = new AbortController();
     set((s) => ({ ...s, loading: true, error: "" }));
     get(path, params, controller.signal)
@@ -75,7 +80,7 @@ function useResource(path, params = {}, revision = 0) {
           set({ data: null, loading: false, error: e.message });
       });
     return () => controller.abort();
-  }, [path, key, revision]);
+  }, [path, key, revision, enabled]);
   return state;
 }
 function useScenario(body, revision = 0, enabled = true) {
@@ -458,7 +463,7 @@ function RoutePicker({ routes, selected, onChange }) {
     </details>
   );
 }
-function DateFilter({ filters, setFilters }) {
+function DateFilter({ filters, setFilters, bounds = [] }) {
   return (
     <details className="date-picker">
       <summary>
@@ -478,7 +483,8 @@ function DateFilter({ filters, setFilters }) {
             type="date"
             aria-label="Начало периода"
             value={filters.date_from}
-            max={filters.horizon === "day" ? undefined : filters.date_to}
+            min={bounds[0]}
+            max={filters.horizon === "day" ? bounds[1] : filters.date_to}
             onChange={(e) =>
               e.target.value &&
               // На горизонте «день» период — одни сутки: конец следует за началом.
@@ -498,6 +504,7 @@ function DateFilter({ filters, setFilters }) {
             type="date"
             aria-label="Конец периода"
             min={filters.date_from}
+            max={bounds[1]}
             value={filters.date_to}
             onChange={(e) =>
               e.target.value &&
@@ -684,13 +691,28 @@ function HistoricalBars({ filters, cutoff, metaError }) {
 // /api/forecast/routes отдаёт маршруты по номеру; рейтинг и рекомендации —
 // по объёму, маршруты без пассажиров в периоде в рекомендации не попадают.
 const byTotal = (routes) => [...routes].sort((a, b) => (b.total || 0) - (a.total || 0));
-function Ranking({ resource, onRoute, horizon }) {
+const ruDate = (d) => (d ? d.split("-").reverse().join(".") : "—");
+function Ranking({ resource, onRoute, horizon, period, forecastRange = [], allHours = true }) {
   return (
     <Panel
       title={`Рейтинг маршрутов по пассажиропотоку${horizon === "day" ? " (день)" : horizon === "year" ? " (год)" : ""}`}
       info="Маршруты по объёму пассажиропотока за выбранный период. Доля показывает вклад маршрута в общий поток."
       className="ranking"
     >
+      {period === null ? (
+        <p className="rank-period warn">
+          Рейтинг считается по периоду прогноза ({ruDate(forecastRange[0])} —{" "}
+          {ruDate(forecastRange[1])}); выбранный диапазон в него не попадает.
+        </p>
+      ) : period ? (
+        <p className="rank-period">
+          Посчитан по прогнозу за{" "}
+          {period.from === period.to
+            ? ruDate(period.from)
+            : `${ruDate(period.from)} — ${ruDate(period.to)}`}
+          {allHours ? ", все часы суток" : " — за все часы суток, фильтр часов к рейтингу не применяется"}
+        </p>
+      ) : null}
       <ResourceError resource={resource} />
       <div className="table-scroll">
         <table>
@@ -727,7 +749,8 @@ function Ranking({ resource, onRoute, horizon }) {
           </tbody>
         </table>
       </div>
-      {!resource.loading &&
+      {period !== null &&
+        !resource.loading &&
         !resource.error &&
         !asList(resource.data, "routes").length && (
           <div className="empty">Нет маршрутов за выбранный период</div>
@@ -746,6 +769,7 @@ function Coefficients({
   const season = (factors?.seasons?.warm || [4, 5, 6, 7, 8, 9]).includes(month)
     ? "warm" : "cold";
   const options = factors?.options || [];
+  const warmScope = options.find((o) => o.factor_code === "WEATHER" && o.season === "warm")?.scope;
   const scenarios = (factor) => options.filter((option) =>
     option.factor_code === factor && option.confirmed === true &&
     (option.season === season || option.season === "all"));
@@ -772,9 +796,9 @@ function Coefficients({
               <option value={neutral}>{key === "weather" ? "Обычная погода" : "Нет события"}</option>
               {available.map((item) => <option key={item.option_code} value={item.option_code}>{item.label}</option>)}
             </select>
-            {!available.length && <small className="scenario-note">{key === "weather" && season === "cold"
-              ? "Для холодного сезона значимого эффекта в данных не обнаружено"
-              : "Подтверждённых сценариев для выбранной даты нет"}</small>}
+            {!available.length && <small className="scenario-note">{key === "weather"
+              ? `Измеренных сценариев погоды для этой даты нет: эффект погоды значим только в тёплый сезон${warmScope ? ` (${warmScope})` : ""}. Свою гипотезу задайте в режиме «Вручную».`
+              : "Измеренных сценариев событий нет: данных о массовых событиях в истории нет. Свою гипотезу задайте в режиме «Вручную»."}</small>}
           </> : <>
             <div className="scenario-slider"><input type="range" min="-20" max="20" step="1"
               aria-label={`${label}: ручная поправка`} value={coeff[`${key}Pct`]}
@@ -945,6 +969,40 @@ function Modal({ title, onClose, children }) {
         </div>
         {children}
       </section>
+    </div>
+  );
+}
+// /api/scope — область определения и адаптации модели. Рендерится по факту
+// ответа: тексты приходят с бекенда, отсутствующие поля пропускаются.
+function ScopeView({ scope }) {
+  if (typeof scope === "string") return <p className="scope-note">{scope}</p>;
+  const t = scope.target || {}, v = scope.valid_for || {};
+  const range = (r) => (Array.isArray(r) && r.length === 2 ? `${ruDate(r[0])} — ${ruDate(r[1])}` : null);
+  const valid = [
+    Array.isArray(v.routes) && v.routes.length ? `Маршруты: ${v.routes.join(", ")}` : null,
+    v.horizon_days != null ? `Горизонт: ${v.horizon_days} дн.` : null,
+    range(v.period) && `Период прогноза: ${range(v.period)}`,
+    range(v.training_period) && `Период обучения: ${range(v.training_period)}`,
+  ].filter(Boolean);
+  const list = (title, items) =>
+    Array.isArray(items) && items.length ? (
+      <section className="scope-section">
+        <h3>{title}</h3>
+        <ul>{items.map((item, i) => <li key={i}>{item}</li>)}</ul>
+      </section>
+    ) : null;
+  return (
+    <div className="scope-view">
+      {(t.definition || t.granularity || t.note) && (
+        <p className="scope-note">
+          {t.definition && <b>{t.definition}</b>}
+          {t.granularity && <>{t.definition ? " · " : ""}{t.granularity}.</>}
+          {t.note && <> {t.note}</>}
+        </p>
+      )}
+      {valid.length > 0 && <p className="scope-valid">{valid.join(" · ")}</p>}
+      {list("Ограничения", scope.limitations)}
+      {list("Перенос модели", scope.adaptation)}
     </div>
   );
 }
@@ -1183,7 +1241,6 @@ function Workspace() {
     params = forecastParams(filters, {}, false),
     baseParams = forecastParams(filters, deferred, false),
     forecast = useResource("/forecast", params, revision),
-    ranking = useResource("/forecast/routes", params, revision),
     routes = useResource("/routes"),
     geometry = useResource("/geometry"),
     stops = useResource(
@@ -1195,8 +1252,35 @@ function Workspace() {
     health = useResource("/health"),
     factors = useResource("/factors"),
     scope = useResource("/scope"),
+    forecastFrom = meta.data?.forecast_from || (demo ? "2025-11-01" : null),
+    forecastTo = meta.data?.forecast_to || (demo ? "2025-12-31" : null),
+    // /api/forecast/routes считает только прогноз: запрашиваем пересечение
+    // выбранного периода с периодом прогноза. null — пересечение пустое,
+    // undefined — границы прогноза ещё не известны.
+    rankPeriod = forecastFrom && forecastTo
+      ? (() => {
+          const from = filters.date_from > forecastFrom ? filters.date_from : forecastFrom;
+          const to = filters.date_to < forecastTo ? filters.date_to : forecastTo;
+          return from <= to ? { from, to } : null;
+        })()
+      : undefined,
+    ranking = useResource(
+      "/forecast/routes",
+      rankPeriod
+        ? { date_from: rankPeriod.from, date_to: rankPeriod.to }
+        : { date_from: filters.date_from, date_to: filters.date_to },
+      revision,
+      rankPeriod !== null && (rankPeriod !== undefined || !!meta.error),
+    ),
     cutoff = meta.data?.cutoff_date || (demo ? "2025-10-31" : null),
     history = useHistory(filters, cutoff, "line", revision, meta.error);
+  useEffect(() => {
+    if (analytics || !forecastFrom || !forecastTo) return;
+    const clamp = (d) => (d < forecastFrom ? forecastFrom : d > forecastTo ? forecastTo : d);
+    const from = clamp(filters.date_from), to = clamp(filters.date_to);
+    if (from !== filters.date_from || to !== filters.date_to)
+      setFilters((f) => ({ ...f, date_from: from, date_to: to, anchor: from }));
+  }, [analytics, forecastFrom, forecastTo, filters.date_from, filters.date_to]);
   const warmMonths = factors.data?.seasons?.warm || [4, 5, 6, 7, 8, 9];
   const selectedSeason = warmMonths.includes(Number(filters.date_from.slice(5, 7))) ? "warm" : "cold";
   const validCode = (factor, code, neutral) =>
@@ -1282,7 +1366,8 @@ function Workspace() {
     dispatchForecast = previewForView.data?.scenario || forecast.data,
     events = dispatchForecast?.network_events || [],
     rawSeries = (analytics ? forecast.data : dispatchForecast)?.points || [],
-    series = filters.horizon === "year" ? toMonths(rawSeries) : rawSeries,
+    series = filters.horizon === "year"
+      ? withBridge(toMonths(rawSeries), history.points) : rawSeries,
     historyPoints = history.points,
     historyLabel = {
       day: `История: ${["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"][new Date(filters.date_from + "T00:00:00Z").getUTCDay()]}, среднее за 4 недели до ${cutoff || "среза"}`,
@@ -1398,7 +1483,11 @@ function Workspace() {
                 <label>Временной интервал</label>
                 <ManualHourFilter filters={filters} setFilters={setFilters} />
                 <label>Дата</label>
-                <DateFilter filters={filters} setFilters={setFilters} />
+                <DateFilter
+                  filters={filters}
+                  setFilters={setFilters}
+                  bounds={[forecastFrom, forecastTo]}
+                />
                 <label>Статус</label>
                 <select
                   aria-label="Статус"
@@ -1490,6 +1579,9 @@ function Workspace() {
                 resource={ranking}
                 onRoute={openRoute}
                 horizon={filters.horizon}
+                period={rankPeriod}
+                forecastRange={[forecastFrom, forecastTo]}
+                allHours={filters.hour_from === 0 && filters.hour_to === 23}
               />
             </div>
           </div>
@@ -1498,6 +1590,7 @@ function Workspace() {
             <div className="dispatch-center">
               <TramMap
                 geometry={geometry.data}
+                selectedRoutes={filters.routes}
                 stops={asList(stops.data, "stops")}
                 ranking={rank}
                 onRoute={openRoute}
@@ -1612,13 +1705,7 @@ function Workspace() {
           onClose={() => setScopeOpen(false)}
         >
           <ResourceError resource={scope} />
-          {scope.data && (
-            <pre className="scope-text">
-              {typeof scope.data === "string"
-                ? scope.data
-                : JSON.stringify(scope.data, null, 2)}
-            </pre>
-          )}
+          {scope.data && <ScopeView scope={scope.data} />}
         </Modal>
       )}
       {toast && (

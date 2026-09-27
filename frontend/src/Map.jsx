@@ -8,6 +8,7 @@ export default function TramMap({
   ranking = [],
   onRoute,
   demo,
+  selectedRoutes = [],
 }) {
   const el = useRef(),
     map = useRef(),
@@ -93,7 +94,12 @@ export default function TramMap({
     if (!ready || !m) return;
     const data = {
       type: "FeatureCollection",
-      features: (geometry?.features || []).map((f) => ({
+      // Пустой выбор — все маршруты. У маршрута две features (по одной на
+      // направление), фильтр по properties.route оставляет обе.
+      features: (geometry?.features || [])
+        .filter((f) => !selectedRoutes.length ||
+          selectedRoutes.includes(String(f.properties?.route)))
+        .map((f) => ({
         ...f,
         properties: {
           ...f.properties,
@@ -193,7 +199,7 @@ export default function TramMap({
           ]
         : "#0095ff",
     );
-  }, [ready, geometry, stops, ranking, showRoutes, showStops, load]);
+  }, [ready, geometry, stops, ranking, showRoutes, showStops, load, selectedRoutes.join(",")]);
   return (
     <section className="map panel">
       <div ref={el} className="map-canvas" />

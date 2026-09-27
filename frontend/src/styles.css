@@ -2341,3 +2341,56 @@ small {
   outline: 1px dashed rgba(143, 163, 186, 0.18);
   outline-offset: -1px;
 }
+
+/* Неактивный список сценариев: видно без наведения, что выбрать нечего */
+.scenario-factor select:disabled {
+  appearance: none;
+  -webkit-appearance: none;
+  color: #5f7a8e;
+  background: #06131d;
+  border: 1px dashed #24445a;
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+/* Модалка «Факторы и ограничения модели» — /api/scope */
+.scope-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #c9dbea;
+  max-height: 65vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.scope-note b {
+  color: #e5f4ff;
+}
+.scope-valid {
+  color: #7fd3ff;
+}
+.scope-section h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e5f4ff;
+  margin: 0 0 6px;
+}
+.scope-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.scope-section li + li {
+  margin-top: 5px;
+}
+
+/* Период, за который фактически посчитан рейтинг */
+.rank-period {
+  margin: 0 12px 6px;
+  font-size: 11px;
+  color: #8fb3cc;
+}
+.rank-period.warn {
+  color: #ffcc65;
+}
