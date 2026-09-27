@@ -446,6 +446,44 @@ function HourFilter({ filters, setFilters }) {
   const hours = Array.from({length:24}, (_,i) => i);
   return <details className="date-picker hour-picker"><summary><Clock3 size={17}/><span>{String(filters.hour_from).padStart(2,"0")}:00 — {String(filters.hour_to).padStart(2,"0")}:59</span><ChevronDown size={13}/></summary><div className="date-options"><label>С часа<select aria-label="С часа" value={filters.hour_from} onChange={e => {const hour=Number(e.target.value); if(Number.isInteger(hour) && hour>=0 && hour<=23) setFilters(f=>({...f,hour_from:hour,hour_to:Math.max(hour,f.hour_to)}));}}>{hours.map(h=><option key={h} value={h}>{String(h).padStart(2,"0")}:00</option>)}</select></label><label>По час<select aria-label="По час" value={filters.hour_to} onChange={e=>{const hour=Number(e.target.value); if(Number.isInteger(hour) && hour>=0 && hour<=23) setFilters(f=>({...f,hour_to:hour,hour_from:Math.min(hour,f.hour_from)}));}}>{hours.map(h=><option key={h} value={h}>{String(h).padStart(2,"0")}:59</option>)}</select></label></div></details>;
 }
+function ManualHourFilter({ filters, setFilters }) {
+  const [draft, setDraft] = useState({ from: String(filters.hour_from).padStart(2, "0"), to: String(filters.hour_to).padStart(2, "0") });
+  const [error, setError] = useState("");
+  const committed = useRef([filters.hour_from, filters.hour_to]);
+  useEffect(() => {
+    if (committed.current[0] === filters.hour_from && committed.current[1] === filters.hour_to) return;
+    committed.current = [filters.hour_from, filters.hour_to];
+    setDraft({ from: String(filters.hour_from).padStart(2, "0"), to: String(filters.hour_to).padStart(2, "0") });
+    setError("");
+  }, [filters.hour_from, filters.hour_to]);
+  const change = (key, value) => {
+    if (!/^\d{0,2}$/.test(value) || (value && Number(value) > 23)) return;
+    const next = { ...draft, [key]: value };
+    setDraft(next);
+    if (!next.from || !next.to) { setError(""); return; }
+    const from = Number(next.from), to = Number(next.to);
+    if (from > to) { setError("Начало интервала не может быть позже окончания"); return; }
+    setError("");
+    committed.current = [from, to];
+    setFilters((current) => ({ ...current, hour_from: from, hour_to: to }));
+  };
+  const finish = (key) => {
+    if (draft[key]) setDraft((current) => ({ ...current, [key]: current[key].padStart(2, "0") }));
+    else setDraft((current) => ({ ...current, [key]: String(filters[key === "from" ? "hour_from" : "hour_to"]).padStart(2, "0") }));
+  };
+  return <div className="manual-hour-filter">
+    <div className="manual-hour-fields">
+      {[["from", "С часа", ":00"], ["to", "По час", ":59"]].map(([key, label, suffix]) =>
+        <div className="manual-hour-field" key={key}>
+          <span>{label}</span>
+          <div><input aria-label={label} inputMode="numeric" autoComplete="off" maxLength={2}
+            value={draft[key]} onChange={(event) => change(key, event.target.value)}
+            onBlur={() => finish(key)} /><span>{suffix}</span></div>
+        </div>)}
+    </div>
+    {error && <small className="manual-hour-error" role="alert">{error}</small>}
+  </div>;
+}
 function Export({ params, notify }) {
   return (
     <a
@@ -1343,7 +1381,7 @@ function Workspace() {
                   ))}
                 </select>
                 <label>Временной интервал</label>
-                <HourFilter filters={filters} setFilters={setFilters} />
+                <ManualHourFilter filters={filters} setFilters={setFilters} />
                 <label>Дата</label>
                 <DateFilter filters={filters} setFilters={setFilters} />
                 <label>Статус</label>
