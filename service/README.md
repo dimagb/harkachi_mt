@@ -15,6 +15,14 @@ cd harkachi_mt/service
 docker compose up --build
 ```
 
+**Сборке нужна сеть.** `docker compose up --build` скачивает базовый образ
+`python:3.12-slim` с Docker Hub и зависимости с PyPI. Если Docker Hub
+недоступен, сборка падает с ошибкой `failed to resolve source metadata ...
+EOF`. Образ нужно собрать заранее, пока есть доступ к Docker Hub и PyPI;
+дальше `docker compose up` без `--build` ничего не скачивает. Работающему
+сервису сеть не нужна: прогноз и данные берутся из `data/`, который
+монтируется в контейнер.
+
 Затем открыть:
 
 - http://localhost:8000 — интерфейс: вход, диспетчерская, аналитика
