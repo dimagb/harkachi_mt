@@ -37,9 +37,7 @@ export function LineChart({
       arr.map((p, i) => `${i ? "L" : "M"}${x(p)},${y(p)}`).join(" ");
   if (!all.length)
     return <div className="empty">Нет данных за выбранный период</div>;
-  // Первая настоящая точка прогноза: «мостовая» точка (bridge) — это
-  // последний месяц истории, отметка начала прогноза ставится не на неё.
-  const start = points.find((p) => !p.bridge);
+  const start = points[0];
   const unit = max > 2e6 ? 1e6 : 1000;
   return (
     <div className="chart-wrap">
@@ -132,7 +130,7 @@ export function LineChart({
                 dispatch && color === "#ff3656" ? "8 5" : undefined
               }
             />
-            {arr.filter((p) => !p.bridge).map((p) => (
+            {arr.map((p) => (
               <circle
                 key={p.key}
                 cx={x(p)}

@@ -47,7 +47,6 @@ import {
   hourProfile,
   toMonths,
   scenarioFactor,
-  withBridge,
 } from "./api";
 import { demoData, demoPreview } from "./demo";
 import { LineChart, Bars, Heatmap } from "./charts";
@@ -1327,7 +1326,7 @@ function Workspace() {
     events = dispatchForecast?.network_events || [],
     rawSeries = (analytics ? forecast.data : dispatchForecast)?.points || [],
     series = filters.horizon === "year"
-      ? withBridge(toMonths(rawSeries), history.points) : rawSeries,
+      ? toMonths(rawSeries) : rawSeries,
     historyPoints = history.points,
     historyLabel = {
       day: `История: ${["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"][new Date(filters.date_from + "T00:00:00Z").getUTCDay()]}, среднее за 4 недели до ${cutoff || "среза"}`,
