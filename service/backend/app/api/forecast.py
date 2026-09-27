@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
-from app import config
-from app.api.deps import adjustment_params, parse_date_param, parse_routes_param
+from app.api.deps import (
+    ApiError,
+    adjustment_params,
+    check_hours,
+    check_period,
+    check_route,
+    parse_date_param,
+    parse_routes_param,
+)
 from app.pipeline import aggregate
 from app.pipeline.adjust import Adjustment
 from app.pipeline.ingest import get_dataset
@@ -18,6 +25,16 @@ HORIZON_TO_GRANULARITY = {
     "month": "day",     # среднесрочный: месяц по дням
     "year": "month",    # долгосрочный: год по месяцам
 }
+
+
+def _alias(main, alias, main_name, alias_name):
+    """Имена из раздела 38 контракта — алиасы основных, не замена."""
+    if main is not None and alias is not None and main != alias:
+        raise ApiError(
+            400, "INVALID_PARAMETER",
+            f"Переданы и {main_name}, и его алиас {alias_name} с разными значениями",
+        )
+    return main if main is not None else alias
 
 
 @router.get("", summary="Прогноз с фильтрами и агрегацией")
@@ -37,34 +54,43 @@ def get_forecast(
     ),
     split_by_route: bool = Query(False, description="Разбить ряд по маршрутам"),
     source: str = Query("forecast", description="forecast или history"),
+    route: str | None = Query(None, description="Алиас routes (раздел 38 контракта)"),
+    from_: str | None = Query(None, alias="from", description="Алиас date_from"),
+    to: str | None = Query(None, description="Алиас date_to"),
     adjustment: Adjustment = Depends(adjustment_params),
 ) -> dict:
+    routes = _alias(routes, route, "routes", "route")
+    date_from = _alias(date_from, from_, "date_from", "from")
+    date_to = _alias(date_to, to, "date_to", "to")
     if horizon not in HORIZON_TO_GRANULARITY:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "horizon принимает значения day, month или year. "
-                f"Получено: {horizon!r}"
-            ),
+        raise ApiError(
+            400, "INVALID_PARAMETER",
+            f"horizon принимает значения day, month или year. Получено: {horizon!r}",
         )
-    if hour_from > hour_to:
-        raise HTTPException(
-            status_code=400,
-            detail="hour_from не может быть больше hour_to",
+    if granularity is not None and granularity not in aggregate.GRANULARITIES:
+        raise ApiError(
+            400, "INVALID_PARAMETER",
+            f"granularity принимает значения hour, day или month. Получено: {granularity!r}",
         )
+    check_hours(hour_from, hour_to)
     if source not in ("forecast", "history"):
-        raise HTTPException(
-            status_code=400,
-            detail="source принимает значения forecast или history",
+        raise ApiError(
+            400, "INVALID_PARAMETER", "source принимает значения forecast или history"
         )
 
     step = granularity or HORIZON_TO_GRANULARITY[horizon]
     dataset = get_dataset()
+    if source == "forecast" and not dataset.forecast:
+        raise ApiError(503, "FORECAST_NOT_LOADED", "Прогноз не загружен: нет файла submission.csv")
+    start = parse_date_param(date_from, "date_from")
+    end = parse_date_param(date_to, "date_to")
+    route_list = parse_routes_param(routes)
+    warnings = check_period(dataset, source, start, end)
     result = aggregate.series(
         dataset,
-        routes=parse_routes_param(routes),
-        date_from=parse_date_param(date_from, "date_from"),
-        date_to=parse_date_param(date_to, "date_to"),
+        routes=route_list,
+        date_from=start,
+        date_to=end,
         hour_from=hour_from,
         hour_to=hour_to,
         granularity=step,
@@ -74,6 +100,8 @@ def get_forecast(
         network=network_repository().effect(),
     )
     result["horizon"] = horizon
+    if warnings:
+        result["warnings"] = warnings
     return result
 
 
@@ -87,7 +115,8 @@ def forecast_by_routes(
     network = network_repository().effect()
     start = parse_date_param(date_from, "date_from")
     end = parse_date_param(date_to, "date_to")
-    return {
+    warnings = check_period(dataset, "forecast", start, end)
+    result = {
         "period": {"from": date_from, "to": date_to},
         "routes": aggregate.route_totals(
             dataset,
@@ -99,6 +128,12 @@ def forecast_by_routes(
         "adjustments": adjustment.describe(),
         "network_events": network.relevant(None, start, end),
     }
+    secondary = network.secondary_effects(None, start, end)
+    if secondary:
+        result["secondary_effects"] = secondary
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 @router.get("/stops", summary="Разложение прогноза по остановкам (оценочное)")
@@ -110,15 +145,13 @@ def forecast_by_stops(
     hour_to: int = Query(23, ge=0, le=23),
     adjustment: Adjustment = Depends(adjustment_params),
 ) -> dict:
-    if route not in config.ROUTES:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Маршрут {route} не входит в набор задачи: {config.ROUTES}",
-        )
+    check_route(route)
+    check_hours(hour_from, hour_to)
     dataset = get_dataset()
     network = network_repository().effect()
     start = parse_date_param(date_from, "date_from")
     end = parse_date_param(date_to, "date_to")
+    warnings = check_period(dataset, "forecast", start, end)
     result = aggregate.by_stop(
         dataset,
         route,
@@ -130,6 +163,11 @@ def forecast_by_stops(
         network=network,
     )
     result["network_events"] = network.relevant([route], start, end)
+    secondary = network.secondary_effects([route], start, end)
+    if secondary:
+        result["secondary_effects"] = secondary
+    if warnings:
+        result["warnings"] = warnings
     if not result["stops"]:
         result["note"] = (
             f"Для маршрута {route} в справочниках нет координат остановок. "
@@ -144,6 +182,11 @@ def compare(
     routes: str | None = Query(None),
     granularity: str = Query("day"),
 ) -> dict:
+    if granularity not in aggregate.GRANULARITIES:
+        raise ApiError(
+            400, "INVALID_PARAMETER",
+            f"granularity принимает значения hour, day или month. Получено: {granularity!r}",
+        )
     dataset = get_dataset()
     return aggregate.compare_with_history(
         dataset,

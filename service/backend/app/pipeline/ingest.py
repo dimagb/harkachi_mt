@@ -12,13 +12,17 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import logging
+import threading
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
 from app import config
+from app.pipeline.shared_state import reload_generation
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +76,64 @@ def _column_map(columns) -> dict:
 
 
 @dataclass
+class RowIndex:
+    """Строки прогноза или истории с предрасчитанными ключами и индексом
+    (маршрут, дата) → позиции строк.
+
+    Запрос выбирает только нужные маршруты и даты, а не перебирает всё.
+    Позиции возвращаются в исходном порядке строк, поэтому суммы
+    складываются в той же последовательности, что и при полном переборе:
+    сложение float неассоциативно, и другой порядок мог бы сдвинуть
+    последний знак.
+    """
+
+    # (route, day, hour, value, ключ часа, ключ дня, ключ месяца)
+    rows: list = field(default_factory=list)
+    by_route_day: dict = field(default_factory=dict)
+    dates: list = field(default_factory=list)
+    routes: list = field(default_factory=list)
+
+    KEY_POSITION = {"hour": 4, "day": 5, "month": 6}
+
+    @classmethod
+    def build(cls, store: dict) -> "RowIndex":
+        rows = []
+        by_route_day: dict = defaultdict(list)
+        iso_cache: dict = {}
+        for pos, ((route, day, hour), value) in enumerate(store.items()):
+            iso = iso_cache.get(day)
+            if iso is None:
+                iso = iso_cache[day] = day.isoformat()
+            rows.append((route, day, hour, value, f"{iso}T{hour:02d}", iso, iso[:7]))
+            by_route_day[(route, day)].append(pos)
+        return cls(
+            rows=rows,
+            by_route_day=dict(by_route_day),
+            dates=sorted({day for _, day in by_route_day}),
+            routes=sorted({route for route, _ in by_route_day}),
+        )
+
+    def positions(self, routes=None, start: date | None = None,
+                  end: date | None = None) -> list:
+        """Позиции строк по маршрутам и диапазону дат включительно."""
+        lo = bisect_left(self.dates, start) if start is not None else 0
+        hi = bisect_right(self.dates, end) if end is not None else len(self.dates)
+        days = self.dates[lo:hi]
+        wanted = sorted(set(routes)) if routes else self.routes
+        get = self.by_route_day.get
+        result: list = []
+        for route in wanted:
+            for day in days:
+                found = get((route, day))
+                if found:
+                    result.extend(found)
+        # Строки обычно уже упорядочены по маршруту и дате, тогда сортировка
+        # линейная; в любом случае восстанавливает исходный порядок.
+        result.sort()
+        return result
+
+
+@dataclass
 class Dataset:
     """Нормализованные данные в памяти."""
 
@@ -82,12 +144,18 @@ class Dataset:
     history_dates: list = field(default_factory=list)
     loaded_at: datetime = field(default_factory=datetime.utcnow)
     source_files: dict = field(default_factory=dict)
+    forecast_md5: str | None = None
 
     # --- производные срезы, считаются один раз на старте
     forecast_by_route_date: dict = field(default_factory=dict)
     history_by_route_date: dict = field(default_factory=dict)
+    forecast_index: RowIndex = field(default_factory=RowIndex)
+    history_index: RowIndex = field(default_factory=RowIndex)
 
     def build_indexes(self) -> None:
+        self.forecast_index = RowIndex.build(self.forecast)
+        self.history_index = RowIndex.build(self.history)
+
         by_rd = defaultdict(float)
         for (route, day, _hour), value in self.forecast.items():
             by_rd[(route, day)] += value
@@ -186,6 +254,12 @@ def load() -> Dataset:
     dataset.forecast, forecast_files = load_forecast(
         data_dir, config.FORECAST_FILE
     )
+    # md5 байтов файла прогноза: по нему /api/meta решает, относится ли
+    # score из configs/release.json к тому, что сервис реально отдаёт.
+    if forecast_files:
+        dataset.forecast_md5 = hashlib.md5(
+            (data_dir / forecast_files[0]).read_bytes()
+        ).hexdigest()
     dataset.history, history_files = load_history(data_dir)
 
     dataset.routes = sorted(
@@ -210,18 +284,30 @@ def load() -> Dataset:
 
 
 _dataset: Dataset | None = None
+_dataset_generation: tuple | None = None
+_dataset_lock = threading.Lock()
 
 
 def get_dataset() -> Dataset:
-    global _dataset
-    if _dataset is None:
-        _dataset = load()
+    """Данные в памяти процесса. Если другой воркер выполнил POST /api/reload,
+    метка перезагрузки изменилась — перечитать файлы здесь тоже (один stat
+    на вызов)."""
+    global _dataset, _dataset_generation
+    generation = reload_generation()
+    if _dataset is None or generation != _dataset_generation:
+        with _dataset_lock:
+            if _dataset is None or generation != _dataset_generation:
+                _dataset = load()
+                _dataset_generation = generation
     return _dataset
 
 
 def reload_dataset() -> Dataset:
     """Перечитать данные без перезапуска сервиса — нужно, когда ML-команда
-    подкладывает новый файл прогноза."""
-    global _dataset
-    _dataset = load()
+    подкладывает новый файл прогноза. Остальные воркеры перечитают по метке
+    перезагрузки, которую ставит POST /api/reload."""
+    global _dataset, _dataset_generation
+    with _dataset_lock:
+        _dataset = load()
+        _dataset_generation = reload_generation()
     return _dataset

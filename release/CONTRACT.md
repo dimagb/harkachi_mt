@@ -4,8 +4,8 @@
 (`schema_version = 1.0`). Финальный релиз собирается из закоммиченного кода:
 
 ```bash
-python -m ml.build_release --require-clean --output release/forecast_release.duckdb --submission release/submission.csv
-python -m ml.build_release --data /data --output /data/forecast_release.duckdb     # в контейнере
+python -m ml.build_release --require-clean --data service/data --output release/forecast_release.duckdb --submission release/submission.csv
+python -m ml.build_release --data /data --output /data/forecast_release.duckdb     # в ML-окружении, не в образе сервиса
 ```
 
 Полное описание таблиц, содержимого `model_prediction` и коэффициентов — `docs/ml_release.md`.

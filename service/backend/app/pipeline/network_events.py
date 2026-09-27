@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from dataclasses import asdict, dataclass, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+from app.pipeline.shared_state import atomic_write, file_lock, signature
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +107,84 @@ class NetworkEvent:
         )
 
 
+@dataclass(frozen=True)
+class SecondaryRule:
+    """Измеренный вторичный эффект: закрытие маршрута-источника меняет
+    спрос на маршруте-цели. Только измеренные правила (раздел 23 контракта):
+    ml/transfer_experiment.py, artifacts/transfer_experiment.md."""
+
+    event_type: str
+    source_route: int
+    target_route: int
+    factor: float
+    evidence: str
+    caveat: str
+    # Дни недели, на которых правило измерено и только к которым применяется
+    # (0 — понедельник … 6 — воскресенье). Перенос на другие дни — отдельное
+    # измерение, не допущение.
+    weekdays: frozenset = frozenset(range(7))
+
+    def applies_on(self, day: date) -> bool:
+        return day.weekday() in self.weekdays
+
+    def active_days(self, closure: "NetworkEvent", start: date | None, end: date | None) -> bool:
+        """Есть ли в пересечении закрытия и запрошенного периода хотя бы один
+        день, когда правило действует. Открытое закрытие ограничено запросом."""
+        lo = max(d for d in (closure.valid_from, start) if d is not None)
+        hi_candidates = [d for d in (closure.valid_to, end) if d is not None]
+        if not hi_candidates:
+            return True  # открытое закрытие и открытый запрос — выходные будут
+        hi = min(hi_candidates)
+        day, checked = lo, 0
+        while day <= hi and checked < 7:
+            if self.applies_on(day):
+                return True
+            day += timedelta(days=1)
+            checked += 1
+        return False
+
+    def describe(self, closure: "NetworkEvent") -> dict:
+        return {
+            "kind": "secondary",
+            "event_type": self.event_type,
+            "source_route": self.source_route,
+            "target_route": self.target_route,
+            "factor": self.factor,
+            "source_event_id": closure.id,
+            "valid_from": closure.valid_from.isoformat(),
+            "valid_to": closure.valid_to.isoformat() if closure.valid_to else None,
+            "label": (
+                f"Маршрут {self.target_route} ×{self.factor:.3f} в выходные: перетекание "
+                f"пассажиров при закрытии маршрута {self.source_route}"
+            ),
+            "applies_on": "только суббота и воскресенье внутри дат закрытия",
+            "evidence": self.evidence,
+            "caveat": self.caveat,
+        }
+
+
+SECONDARY_RULES = (
+    SecondaryRule(
+        event_type=FULL_CLOSURE,
+        source_route=17,
+        target_route=11,
+        factor=1.1079,
+        evidence=(
+            "4 из 4 дней > 1 (1.028–1.143), шум 4.3%, placebo p < 0.0001, "
+            "без любого одного дня 1.084–1.131"
+        ),
+        caveat=(
+            "Измерено на 4 выходных днях апреля 2025, поэтому применяется только "
+            "к выходным; перенос на будни потребует отдельного измерения. "
+            "1.108 — консервативная нижняя оценка: маршрут 17 тогда возил 1–13% "
+            "обычного объёма, а не ноль, и при полном закрытии перетекание было "
+            "бы не меньше"
+        ),
+        weekdays=frozenset({5, 6}),
+    ),
+)
+
+
 class NetworkEffect:
     """Неизменяемый снимок активных событий для hot path.
 
@@ -121,22 +200,90 @@ class NetworkEffect:
             by_route.setdefault(event.route, []).append(event)
         self._by_route = by_route
 
+        # Вторичные эффекты: цель правила → (правило, закрытия маршрута-
+        # источника). Правило включается, только если есть активное
+        # FULL_CLOSURE на маршруте-источнике; без таких событий этого словаря
+        # нет, и арифметика прогноза не меняется ни на бит.
+        secondary: dict = {}
+        for rule in SECONDARY_RULES:
+            closures = tuple(
+                e for e in by_route.get(rule.source_route, ())
+                if e.type == rule.event_type
+            )
+            if closures:
+                secondary.setdefault(rule.target_route, []).append((rule, closures))
+        self._secondary = secondary
+
+        # Маршруты с событиями или вторичным эффектом: остальные hot path
+        # пропускает без вызова apply.
+        self.routes = frozenset(by_route) | frozenset(secondary)
+        # (маршрут, день) → события, покрывающие этот день, в исходном
+        # порядке. Заполняется лениво; снимок неизменяемый, поэтому гонка
+        # двух запросов безвредна — оба запишут одно и то же.
+        self._by_route_day: dict = {}
+        self._secondary_day: dict = {}
+
     @property
     def is_empty(self) -> bool:
         return not self._by_route
 
     def apply(self, route: int, day: date, hour: int, value: float) -> float:
-        events = self._by_route.get(route)
-        if not events:
+        events = self._by_route.get(route, ())
+        secondary = self._secondary.get(route)
+        if not events and not secondary:
             return value
+        todays = self._by_route_day.get((route, day))
+        if todays is None:
+            todays = tuple(e for e in events if e.covers_day(day))
+            self._by_route_day[(route, day)] = todays
         product = 1.0
-        for event in events:
-            if not (event.covers_day(day) and event.covers_hour(hour)):
+        for event in todays:
+            if not event.covers_hour(hour):
                 continue
             if event.type == FULL_CLOSURE:
                 return 0.0
             product *= event.factor if event.factor is not None else 1.0
+        # Вторичный эффект — после прямых, до max(…, 0). Включается только
+        # в дни и часы, когда закрыт маршрут-источник.
+        if secondary:
+            for rule, closures in self._secondary_today(route, day, secondary):
+                if any(c.covers_hour(hour) for c in closures):
+                    product *= rule.factor
         return max(value * product, 0.0)
+
+    def _secondary_today(self, route: int, day: date, secondary: list) -> tuple:
+        key = (route, day)
+        cached = self._secondary_day.get(key)
+        if cached is None:
+            cached = tuple(
+                (rule, active)
+                for rule, closures in secondary
+                if rule.applies_on(day)
+                and (active := tuple(c for c in closures if c.covers_day(day)))
+            )
+            self._secondary_day[key] = cached
+        return cached
+
+    def secondary_effects(
+        self,
+        routes: list | None = None,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> list[dict]:
+        """Вторичные эффекты, действующие на запрошенный период и маршруты.
+        Отдельной записью в ответе — чтобы было видно, откуда изменение."""
+        wanted = set(routes) if routes else None
+        result = []
+        for target, pairs in self._secondary.items():
+            if wanted is not None and target not in wanted:
+                continue
+            for rule, closures in pairs:
+                for closure in closures:
+                    # Запись — только если в пересечении есть день, когда
+                    # правило действует: закрытие 17 на одни будни 11 не меняет.
+                    if closure.overlaps(start, end) and rule.active_days(closure, start, end):
+                        result.append(rule.describe(closure))
+        return result
 
     def relevant(
         self,
@@ -181,13 +328,19 @@ class NetworkEventRepository:
 
 
 class JsonNetworkEventRepository(NetworkEventRepository):
-    """События в JSON-файле, рабочая копия в памяти.
+    """События в JSON-файле; файл — источник правды для всех воркеров.
+
+    Рабочая копия в памяти перечитывается, как только меняется подпись
+    файла (один stat на вызов) — так закрытие, добавленное через один
+    воркер, следующий же запрос видит в любом другом. Запись — под
+    межпроцессной блокировкой: прочитать свежее → изменить → записать
+    атомарно (shared_state).
 
     Снятое событие не удаляется, а получает active=false: остаётся след,
-    что и когда было закрыто. Запись атомарная — через временный файл
-    и os.replace, чтобы обрыв посреди записи не оставил битый JSON.
-    Если каталог только для чтения, события живут в памяти до перезапуска,
-    сервис при этом не падает.
+    что и когда было закрыто. Если каталог только для чтения, события
+    живут в памяти одного воркера до перезапуска — сервис не падает, но
+    при нескольких воркерах это расхождение, поэтому RUNTIME_DIR обязан
+    быть доступен на запись.
     """
 
     def __init__(self, path: Path) -> None:
@@ -195,85 +348,122 @@ class JsonNetworkEventRepository(NetworkEventRepository):
         self._lock = threading.Lock()
         self._events: list[NetworkEvent] = []
         self._effect = NetworkEffect([])
+        self._signature: tuple | None = None
         self.persist_error: str | None = None
         self.reload()
 
+    # --- чтение: файл — источник правды для всех воркеров
+
+    def _read_file(self) -> list[NetworkEvent]:
+        if not self.path.exists():
+            return []
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8") or "[]")
+            return [NetworkEvent.from_dict(item) for item in raw]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            log.error("События сети: %s не прочитан (%s)", self.path, exc)
+            return self._events
+
+    def _install(self, events: list[NetworkEvent], sig: tuple | None) -> None:
+        self._events = events
+        self._effect = NetworkEffect(events)
+        self._signature = sig
+
     def reload(self) -> None:
-        events: list[NetworkEvent] = []
-        if self.path.exists():
-            try:
-                raw = json.loads(self.path.read_text(encoding="utf-8") or "[]")
-                events = [NetworkEvent.from_dict(item) for item in raw]
-            except (OSError, ValueError, KeyError, TypeError) as exc:
-                log.error("События сети: %s не прочитан (%s)", self.path, exc)
+        with file_lock(self.path):
+            sig = signature(self.path)
+            events = self._read_file()
         with self._lock:
-            self._events = events
-            self._effect = NetworkEffect(events)
+            self._install(events, sig)
         log.info(
             "События сети: загружено %d, активных %d",
             len(events), len(self._effect.events),
         )
 
+    def _refresh(self) -> None:
+        """Один stat на вызов: файл изменил другой воркер — перечитать."""
+        if signature(self.path) != self._signature:
+            self.reload()
+
     def list(self, include_inactive: bool = False) -> list[NetworkEvent]:
+        self._refresh()
         events = self._events
         return list(events) if include_inactive else [e for e in events if e.active]
 
     def get(self, event_id: int) -> NetworkEvent | None:
+        self._refresh()
         return next((e for e in self._events if e.id == event_id), None)
 
     def find_duplicate(self, candidate: NetworkEvent) -> NetworkEvent | None:
+        self._refresh()
         key = candidate.identity()
         return next(
             (e for e in self._events if e.active and e.identity() == key), None
         )
 
+    def effect(self) -> NetworkEffect:
+        self._refresh()
+        return self._effect
+
+    # --- запись: прочитать свежее → изменить → записать, всё под блокировкой
+
     def add(self, fields: dict) -> NetworkEvent:
-        with self._lock:
-            next_id = max((e.id for e in self._events), default=0) + 1
+        """Добавить событие. Дубликат активного события — DuplicateEventError:
+        проверка внутри блокировки, иначе два воркера добавили бы одно
+        и то же событие одновременно."""
+        with self._lock, file_lock(self.path):
+            events = self._read_file()
+            probe = NetworkEvent(id=0, active=True, created_at="", **fields)
+            duplicate = next(
+                (e for e in events if e.active and e.identity() == probe.identity()),
+                None,
+            )
+            if duplicate is not None:
+                self._install(events, signature(self.path))
+                raise DuplicateEventError(duplicate)
+            next_id = max((e.id for e in events), default=0) + 1
             event = NetworkEvent(
                 id=next_id,
                 active=True,
                 created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 **fields,
             )
-            self._commit(self._events + [event])
+            self._commit(events + [event])
         return event
 
     def deactivate(self, event_id: int) -> NetworkEvent | None:
-        with self._lock:
-            current = next((e for e in self._events if e.id == event_id), None)
-            if current is None:
-                return None
-            if not current.active:
+        with self._lock, file_lock(self.path):
+            events = self._read_file()
+            current = next((e for e in events if e.id == event_id), None)
+            if current is None or not current.active:
+                self._install(events, signature(self.path))
                 return current
             updated = replace(current, active=False)
-            self._commit(
-                [updated if e.id == event_id else e for e in self._events]
-            )
+            self._commit([updated if e.id == event_id else e for e in events])
         return updated
 
-    def effect(self) -> NetworkEffect:
-        return self._effect
-
     def _commit(self, events: list[NetworkEvent]) -> None:
-        """Под блокировкой: сохранить на диск и подменить снимок."""
-        self._events = events
-        self._effect = NetworkEffect(events)
+        """Под обеими блокировками: сохранить на диск и подменить снимок."""
         payload = json.dumps(
             [e.as_dict() for e in events], ensure_ascii=False, indent=2
         )
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(payload, encoding="utf-8")
-            os.replace(tmp, self.path)
+            atomic_write(self.path, payload)
             self.persist_error = None
         except OSError as exc:
             self.persist_error = str(exc)
             log.warning(
-                "События сети не сохранены в %s (%s) — действуют до перезапуска",
+                "События сети не сохранены в %s (%s) — действуют до перезапуска "
+                "и только в этом воркере",
                 self.path, exc,
             )
+        self._install(events, signature(self.path))
+
+
+class DuplicateEventError(Exception):
+    def __init__(self, existing: NetworkEvent) -> None:
+        super().__init__(f"duplicate of {existing.id}")
+        self.existing = existing
 
 
 _repository: NetworkEventRepository | None = None

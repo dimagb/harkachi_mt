@@ -37,6 +37,7 @@ import math
 from dataclasses import dataclass, field
 
 from app import config
+from app.pipeline.shared_state import reload_generation
 
 log = logging.getLogger(__name__)
 
@@ -371,10 +372,15 @@ def load() -> GeoIndex:
 
 
 _geo: GeoIndex | None = None
+_geo_generation: tuple | None = None
 
 
 def get_geo() -> GeoIndex:
-    global _geo
-    if _geo is None:
+    """Справочники в памяти процесса; перечитываются по метке перезагрузки,
+    как и прогноз (см. ingest.get_dataset)."""
+    global _geo, _geo_generation
+    generation = reload_generation()
+    if _geo is None or generation != _geo_generation:
         _geo = load()
+        _geo_generation = generation
     return _geo

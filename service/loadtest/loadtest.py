@@ -13,11 +13,12 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import statistics
 import sys
 import threading
 import time
-import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 
@@ -40,6 +41,13 @@ def worker(base_url, deadline, latencies, statuses, cache_marks, lock,
     local_status = Counter()
     local_cache = Counter()
     index = 0
+    # Одно keep-alive соединение на поток, как у браузера. Новое TCP-
+    # соединение на каждый запрос на Windows за полминуты исчерпывает
+    # локальные порты (TIME_WAIT, WinError 10048) — и тест меряет клиента,
+    # а не сервис.
+    parsed = urllib.parse.urlsplit(base_url)
+    host, port = parsed.hostname, parsed.port or 80
+    conn = None
     while time.time() < deadline and not stop_event.is_set():
         path = ENDPOINTS[index % len(ENDPOINTS)]
         index += 1
@@ -49,17 +57,23 @@ def worker(base_url, deadline, latencies, statuses, cache_marks, lock,
             path += ("&" if "?" in path else "?") + f"_nc={worker_id}-{index}"
         started = time.perf_counter()
         try:
-            with urllib.request.urlopen(base_url + path, timeout=10) as response:
-                response.read()
-                code = response.status
-                local_cache[response.headers.get("X-Cache", "none")] += 1
-        except urllib.error.HTTPError as exc:
-            code = exc.code
+            if conn is None:
+                conn = http.client.HTTPConnection(host, port, timeout=10)
+            conn.request("GET", path)
+            response = conn.getresponse()
+            response.read()
+            code = response.status
+            local_cache[response.getheader("X-Cache", "none")] += 1
         except Exception:  # noqa: BLE001 — таймауты и обрывы тоже считаем
             code = 0
+            if conn is not None:
+                conn.close()
+            conn = None
         local_lat.append((time.perf_counter() - started) * 1000)
         local_status[code] += 1
 
+    if conn is not None:
+        conn.close()
     with lock:
         latencies.extend(local_lat)
         statuses.update(local_status)

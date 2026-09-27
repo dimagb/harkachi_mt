@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="Segoe UI, Roboto, Arial, sans-serif">
+  <title>Архитектура: прогноз считается заранее, сервис только читает</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#343A40"/>
+    </marker>
+  </defs>
+
+  <rect width="1920" height="1080" fill="#FFFFFF"/>
+
+  <text x="960" y="78" text-anchor="middle" font-size="42" font-weight="700" fill="#212529">Прогноз считается заранее — сервис только читает</text>
+
+  <!-- ВНЕ СЕРВИСА -->
+  <text x="250" y="168" text-anchor="middle" font-size="24" font-weight="700" fill="#495057" letter-spacing="1">ВНЕ СЕРВИСА · ЗАРАНЕЕ</text>
+
+  <rect x="50" y="190" width="400" height="130" rx="14" fill="#F1F3F5" stroke="#495057" stroke-width="3"/>
+  <text x="250" y="246" text-anchor="middle" font-size="30" font-weight="700" fill="#212529">Датасет</text>
+  <text x="250" y="290" text-anchor="middle" font-size="24" fill="#343A40">история и справочники</text>
+
+  <line x1="250" y1="320" x2="250" y2="386" stroke="#343A40" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="50" y="390" width="400" height="130" rx="14" fill="#F1F3F5" stroke="#495057" stroke-width="3"/>
+  <text x="250" y="446" text-anchor="middle" font-size="30" font-weight="700" fill="#212529">Обучение модели</text>
+  <text x="250" y="490" text-anchor="middle" font-size="24" fill="#343A40">ML-команда, пакетно</text>
+
+  <line x1="250" y1="520" x2="250" y2="586" stroke="#343A40" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="50" y="590" width="400" height="130" rx="14" fill="#F1F3F5" stroke="#495057" stroke-width="3"/>
+  <text x="250" y="646" text-anchor="middle" font-size="30" font-weight="700" fill="#212529">submission.csv</text>
+  <text x="250" y="690" text-anchor="middle" font-size="24" fill="#343A40">14 640 строк прогноза</text>
+
+  <!-- модель из сервиса не вызывается -->
+  <line x1="450" y1="455" x2="580" y2="455" stroke="#C92A2A" stroke-width="4" stroke-dasharray="10 8"/>
+  <line x1="503" y1="443" x2="527" y2="467" stroke="#C92A2A" stroke-width="5"/>
+  <line x1="527" y1="443" x2="503" y2="467" stroke="#C92A2A" stroke-width="5"/>
+  <text x="508" y="502" text-anchor="middle" font-size="22" font-weight="600" fill="#C92A2A">нет</text>
+  <text x="508" y="530" text-anchor="middle" font-size="22" font-weight="600" fill="#C92A2A">вызова</text>
+
+  <!-- загрузка прогноза -->
+  <line x1="450" y1="655" x2="606" y2="655" stroke="#343A40" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="515" y="638" text-anchor="middle" font-size="22" fill="#343A40">при старте</text>
+
+  <!-- КОНТЕЙНЕР -->
+  <rect x="580" y="130" width="800" height="690" rx="22" fill="#E7F5FF" stroke="#1864AB" stroke-width="5"/>
+  <text x="980" y="178" text-anchor="middle" font-size="28" font-weight="700" fill="#1864AB" letter-spacing="1">ОДИН DOCKER-КОНТЕЙНЕР</text>
+  <text x="980" y="212" text-anchor="middle" font-size="22" fill="#1864AB">1 воркер uvicorn · 2 vCPU / 2 ГБ</text>
+
+  <rect x="610" y="250" width="340" height="130" rx="14" fill="#FFFFFF" stroke="#1864AB" stroke-width="3"/>
+  <text x="780" y="306" text-anchor="middle" font-size="30" font-weight="700" fill="#212529">Статика фронта</text>
+  <text x="780" y="350" text-anchor="middle" font-size="24" fill="#343A40">страницы интерфейса</text>
+
+  <line x1="950" y1="315" x2="1006" y2="315" stroke="#343A40" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="1010" y="250" width="340" height="130" rx="14" fill="#FFFFFF" stroke="#1864AB" stroke-width="3"/>
+  <text x="1180" y="306" text-anchor="middle" font-size="30" font-weight="700" fill="#212529">FastAPI · /api</text>
+  <text x="1180" y="350" text-anchor="middle" font-size="24" fill="#343A40">кеш ответов в памяти</text>
+
+  <text x="870" y="555" text-anchor="middle" font-size="22" fill="#1864AB">база не меняется — ответ строится от неё заново</text>
+
+  <rect x="610" y="590" width="220" height="130" rx="14" fill="#D0EBFF" stroke="#1864AB" stroke-width="3"/>
+  <text x="720" y="645" text-anchor="middle" font-size="30" font-weight="700" fill="#212529">Прогноз</text>
+  <text x="720" y="688" text-anchor="middle" font-size="24" fill="#343A40">в памяти</text>
+
+  <line x1="830" y1="655" x2="866" y2="655" stroke="#343A40" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="870" y="590" width="220" height="130" rx="14" fill="#FFFFFF" stroke="#1864AB" stroke-width="3"/>
+  <text x="980" y="645" text-anchor="middle" font-size="30" font-weight="700" fill="#212529">What-if</text>
+  <text x="980" y="688" text-anchor="middle" font-size="24" fill="#343A40">ползунки ×k</text>
+
+  <line x1="1090" y1="655" x2="1126" y2="655" stroke="#343A40" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="1130" y="590" width="220" height="130" rx="14" fill="#FFF3BF" stroke="#E67700" stroke-width="3"/>
+  <text x="1240" y="645" text-anchor="middle" font-size="30" font-weight="700" fill="#212529">События сети</text>
+  <text x="1240" y="688" text-anchor="middle" font-size="24" fill="#343A40">закрытие = 0</text>
+
+  <line x1="1240" y1="590" x2="1240" y2="384" stroke="#343A40" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <text x="980" y="782" text-anchor="middle" font-size="26" font-weight="700" fill="#1864AB">ответ = прогноз × what-if × события</text>
+
+  <!-- БРАУЗЕР -->
+  <line x1="1350" y1="315" x2="1466" y2="315" stroke="#343A40" stroke-width="4" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="1418" y="298" text-anchor="middle" font-size="22" fill="#343A40">HTTP</text>
+
+  <rect x="1470" y="130" width="400" height="690" rx="22" fill="#EBFBEE" stroke="#2B8A3E" stroke-width="5"/>
+  <text x="1670" y="200" text-anchor="middle" font-size="34" font-weight="700" fill="#2B8A3E">Браузер</text>
+  <text x="1510" y="290" font-size="28" fill="#212529">• карта маршрутов</text>
+  <text x="1510" y="360" font-size="28" fill="#212529">• графики прогноза</text>
+  <text x="1510" y="430" font-size="28" fill="#212529">• ползунки what-if</text>
+  <text x="1510" y="500" font-size="28" fill="#212529">• закрытия маршрутов</text>
+  <text x="1510" y="570" font-size="28" fill="#212529">• выгрузка CSV / XLSX</text>
+
+  <!-- ML НА ЗАПРОСЕ НЕ РАБОТАЕТ -->
+  <rect x="50" y="865" width="1820" height="170" rx="18" fill="#FFF5F5" stroke="#C92A2A" stroke-width="4"/>
+  <circle cx="150" cy="950" r="55" fill="none" stroke="#C92A2A" stroke-width="8"/>
+  <text x="150" y="963" text-anchor="middle" font-size="36" font-weight="800" fill="#C92A2A">ML</text>
+  <line x1="111" y1="989" x2="189" y2="911" stroke="#C92A2A" stroke-width="8"/>
+  <text x="240" y="935" font-size="36" font-weight="700" fill="#C92A2A">Тяжёлый ML на запросе пользователя не работает</text>
+  <text x="240" y="988" font-size="28" fill="#343A40">Ни обучения, ни predict, ни SQL — только чтение из памяти и умножение.</text>
+</svg>

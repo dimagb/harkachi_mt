@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Прогноз пассажиропотока · трамваи Москвы</title>
+<!--
+  Запасной дашборд. Один файл, без сборки и npm.
+  Установка: скопировать в service/static/index.html — сервис отдаст его на /.
+  Для разработки можно открыть с диска и указать сервис: index.html?api=http://localhost:8000
+  Контракт API — docs/frontend-tasks.md; имена параметров и полей оттуда.
+-->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { --fg:#1f2328; --muted:#59636e; --line:#d1d9e0; --bg:#f6f8fa; --accent:#0969da; --warn:#9a6700; --warnbg:#fff8c5; --err:#cf222e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.4 system-ui, "Segoe UI", Roboto, Arial, sans-serif; color:var(--fg); background:#fff; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); background:var(--bg); }
+  header h1 { margin:0; font-size:18px; }
+  #status { color:var(--muted); font-size:12px; margin-top:2px; }
+  main { display:grid; grid-template-columns: minmax(320px, 42%) 1fr; gap:12px; padding:12px 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { border:1px solid var(--line); border-radius:6px; padding:10px; margin-bottom:12px; }
+  h2 { font-size:14px; margin:0 0 8px; }
+  #map { height:380px; border-radius:4px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .warn { background:var(--warnbg); border:1px solid #d4a72c; color:#4d2d00; padding:8px; border-radius:4px; margin:6px 0; }
+  .err { color:var(--err); }
+  .tabs button { padding:6px 14px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
+  label { font-size:12px; color:var(--muted); }
+  input[type=number] { width:70px; } input[type=date] { width:140px; }
+  .routes label { color:var(--fg); font-size:13px; margin-right:6px; white-space:nowrap; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  td, th { padding:3px 6px; border-bottom:1px solid var(--line); text-align:left; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .bar { height:8px; background:var(--accent); border-radius:2px; }
+  .kv td:first-child { color:var(--muted); }
+  .pos { color:#1a7f37; } .neg { color:var(--err); }
+  a.btn { display:inline-block; padding:6px 12px; border:1px solid var(--accent); border-radius:4px; color:var(--accent); text-decoration:none; margin-right:6px; }
+  #stops tr.hub td { font-weight:600; }
+  canvas { max-height:320px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Прогноз пассажиропотока · трамваи Москвы</h1>
+  <div id="status">загрузка…</div>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Карта маршрутов</h2>
+      <div id="map"></div>
+      <div class="muted" id="mapNote">Толщина и цвет линии — доля маршрута в прогнозе за выбранный период.</div>
+      <div id="noGeo" class="muted"></div>
+    </section>
+    <section>
+      <h2>Маршруты за период</h2>
+      <table id="routeTable"><tbody></tbody></table>
+      <div class="muted">Клик по маршруту — разбивка по остановкам.</div>
+    </section>
+    <section id="stopsBox" hidden>
+      <h2 id="stopsTitle">Остановки</h2>
+      <div class="warn" id="stopsNote"></div>
+      <table id="stops"><thead><tr><th>#</th><th>Остановка</th><th>Напр.</th><th class="num">Посадок</th><th class="num">Доля</th></tr></thead><tbody></tbody></table>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <div class="tabs" id="tabs">
+        <button data-h="day" class="on">День</button><button data-h="month">Месяц</button><button data-h="year">Год</button>
+      </div>
+      <div class="row routes" id="routeFilter"></div>
+      <div class="row">
+        <label>С <input type="date" id="dateFrom"></label>
+        <label>по <input type="date" id="dateTo"></label>
+        <label>часы <input type="number" id="hourFrom" min="0" max="23" value="0"> – <input type="number" id="hourTo" min="0" max="23" value="23"></label>
+      </div>
+      <div id="netWarn"></div>
+      <div id="chartErr" class="err"></div>
+      <canvas id="chart"></canvas>
+      <div class="muted" id="chartNote"></div>
+    </section>
+
+    <section>
+      <h2>Корректирующие коэффициенты</h2>
+      <div class="row">
+        <label>Общий <input type="number" id="k_global" step="0.01" min="0.1" max="5" value="1"></label>
+        <label>Погода <input type="number" id="k_weather" step="0.01" min="0.1" max="5" value="1"></label>
+        <label>с <input type="date" id="weather_from"></label><label>по <input type="date" id="weather_to"></label>
+      </div>
+      <div class="row" id="weatherPresets"></div>
+      <div class="row">
+        <label>Событие <input type="number" id="k_event" step="0.01" min="0.1" max="5" value="1"></label>
+        <label>с <input type="date" id="event_from"></label><label>по <input type="date" id="event_to"></label>
+        <label>По маршрутам <input type="text" id="k_routes" placeholder="17:1.1,50:0.8" size="14"></label>
+      </div>
+      <table class="kv" style="max-width:360px">
+        <tr><td>База</td><td class="num" id="vBase">—</td></tr>
+        <tr><td>Сценарий</td><td class="num" id="vScen">—</td></tr>
+        <tr><td>Разница</td><td class="num" id="vDiff">—</td></tr>
+      </table>
+      <ul id="adjList" class="muted"></ul>
+      <div id="kErr" class="err"></div>
+    </section>
+
+    <section>
+      <h2>Рекомендации</h2>
+      <ul id="recs"></ul>
+    </section>
+
+    <section>
+      <h2>Выгрузка</h2>
+      <a class="btn" id="xlsx" href="#" download>Скачать XLSX</a>
+      <a class="btn" id="csv" href="#" download>Скачать CSV</a>
+      <div class="muted">Выгружается то, что на экране: те же фильтры и коэффициенты.</div>
+    </section>
+  </div>
+</main>
+
+<script>
+const API = (new URLSearchParams(location.search).get("api") || "").replace(/\/$/, "");
+const $ = id => document.getElementById(id);
+const fmt = n => n == null ? "—" : Math.round(n).toLocaleString("ru-RU");
+const state = { horizon: "day", routes: [], meta: null, routeInfo: [] };
+let chart, map, geoLayer;
+
+async function get(path) {
+  const r = await fetch(API + path);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    // Единый формат ошибок {code, message}; старые эндпойнты могли отдавать {detail}.
+    const msg = body.message || (typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body));
+    throw new Error((body.code ? body.code + ": " : "") + msg);
+  }
+  return body;
+}
+
+function filterQuery({ withK = true, withDates = true } = {}) {
+  const p = new URLSearchParams();
+  if (state.routes.length) p.set("routes", state.routes.join(","));
+  if (withDates) {
+    if ($("dateFrom").value) p.set("date_from", $("dateFrom").value);
+    if ($("dateTo").value) p.set("date_to", $("dateTo").value);
+  }
+  p.set("hour_from", $("hourFrom").value || 0);
+  p.set("hour_to", $("hourTo").value || 23);
+  if (withK) for (const [k, v] of Object.entries(kParams())) p.set(k, v);
+  return p;
+}
+
+function kParams() {
+  const out = {};
+  for (const k of ["k_global", "k_weather", "k_event"]) {
+    const v = parseFloat($(k).value);
+    if (!isNaN(v) && v !== 1) out[k] = v;
+  }
+  for (const d of ["weather_from", "weather_to", "event_from", "event_to"]) if ($(d).value) out[d] = $(d).value;
+  if ($("k_routes").value.trim()) out.k_routes = $("k_routes").value.trim();
+  return out;
+}
+
+// ---------------------------------------------------------------- состояние
+async function loadStatus() {
+  try {
+    const [m, h] = await Promise.all([get("/api/meta"), get("/api/health")]);
+    state.meta = m;
+    const d = m.data || {};
+    const parts = [];
+    if (m.release_id) parts.push(`релиз ${m.release_id}` + (m.model_version ? ` (${m.model_version})` : ""));
+    if (m.score != null) parts.push(`score ${m.score}`);
+    if (d.history_period) parts.push(`история ${d.history_period[0]} … ${d.history_period[1]}`);
+    if (d.forecast_period) parts.push(`прогноз ${d.forecast_period[0]} … ${d.forecast_period[1]}`);
+    parts.push(`строк прогноза ${h.forecast_rows}`);
+    parts.push(`событий сети ${m.active_network_events ?? 0}`);
+    parts.push(`приём: батчей ${m.ingest_batches ?? 0}` + (m.last_ingest_at ? `, последний ${m.last_ingest_at}` : ""));
+    parts.push(`статус ${h.status}`);
+    $("status").textContent = parts.join(" · ");
+    if (d.forecast_period && !$("dateFrom").value) setDefaultDates();
+  } catch (e) { $("status").innerHTML = `<span class="err">сервис недоступен: ${e.message}</span>`; }
+}
+
+function setDefaultDates() {
+  const [f, t] = state.meta.data.forecast_period;
+  if (state.horizon === "day") { $("dateFrom").value = "2025-12-15"; $("dateTo").value = "2025-12-15"; }
+  else if (state.horizon === "month") { $("dateFrom").value = f; $("dateTo").value = t; }
+  else { $("dateFrom").value = ""; $("dateTo").value = ""; }
+}
+
+// ---------------------------------------------------------------- маршруты
+async function loadRoutes() {
+  const r = await get("/api/routes");
+  state.routeInfo = r.routes;
+  $("routeFilter").innerHTML = "<span class='muted'>Маршруты:</span> " + r.routes.map(x =>
+    `<label title="${x.note || ""}"><input type="checkbox" value="${x.route}"> ${x.route}${x.note ? " *" : ""}</label>`).join("");
+  $("routeFilter").querySelectorAll("input").forEach(cb => cb.addEventListener("change", () => {
+    state.routes = [...$("routeFilter").querySelectorAll("input:checked")].map(i => +i.value);
+    refresh();
+  }));
+  const notes = r.routes.filter(x => x.note).map(x => `* Маршрут ${x.route}: ${x.note}`);
+  if (notes.length) $("routeFilter").insertAdjacentHTML("afterend", `<div class="muted">${notes.join("<br>")}</div>`);
+}
+
+async function loadRouteTotals(seq) {
+  const p = filterQuery({ withK: true });
+  p.delete("routes"); p.delete("hour_from"); p.delete("hour_to");
+  if (state.horizon === "year") { p.delete("date_from"); p.delete("date_to"); }
+  const r = await get("/api/forecast/routes?" + p);
+  if (seq !== undefined && stale(seq)) return;
+  const max = Math.max(...r.routes.map(x => x.share), 0.0001);
+  $("routeTable").querySelector("tbody").innerHTML = r.routes.map(x => `
+    <tr data-route="${x.route}" style="cursor:pointer">
+      <td>${x.route}</td><td class="num">${fmt(x.total)}</td><td class="num">${(x.share * 100).toFixed(1)}%</td>
+      <td style="width:40%"><div class="bar" style="width:${(x.share / max * 100).toFixed(0)}%"></div></td>
+      <td class="muted">${x.has_geometry ? "" : "нет координат"}</td></tr>`).join("");
+  $("routeTable").querySelectorAll("tr").forEach(tr => tr.addEventListener("click", () => loadStops(+tr.dataset.route)));
+  paintMap(r.routes);
+}
+
+// ---------------------------------------------------------------- карта
+async function initMap() {
+  map = L.map("map").setView([55.76, 37.64], 11);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { maxZoom: 18, attribution: "© OpenStreetMap" }).addTo(map);
+  const g = await get("/api/geometry");
+  state.geometry = g;
+  if (g.routes_without_geometry && g.routes_without_geometry.length)
+    $("noGeo").textContent = `Без координат в справочниках организаторов: маршруты ${g.routes_without_geometry.join(", ")}. На карте не рисуются, прогноз по ним есть.`;
+}
+
+function paintMap(totals) {
+  if (!state.geometry) return;
+  const share = Object.fromEntries(totals.map(x => [x.route, x.share]));
+  const max = Math.max(...Object.values(share), 0.0001);
+  if (geoLayer) geoLayer.remove();
+  // GeoJSON — [долгота, широта]; L.geoJSON переставляет сам.
+  geoLayer = L.geoJSON(state.geometry, {
+    style: f => {
+      const s = (share[f.properties.route] || 0) / max;
+      return { color: `hsl(${210 - 210 * s}, 80%, 42%)`, weight: 2 + 8 * s, opacity: 0.85 };
+    },
+    onEachFeature: (f, layer) => {
+      const p = f.properties;
+      layer.bindTooltip(`Маршрут ${p.route}, напр. ${p.direction}: ${p.from} → ${p.to}<br>доля ${((share[p.route] || 0) * 100).toFixed(1)}%`);
+      layer.on("click", () => loadStops(p.route));
+    },
+  }).addTo(map);
+  try { map.fitBounds(geoLayer.getBounds(), { padding: [10, 10] }); } catch (e) {}
+}
+
+// ---------------------------------------------------------------- остановки
+async function loadStops(route) {
+  const p = filterQuery({ withK: true });
+  p.delete("routes"); p.set("route", route);
+  if (state.horizon === "year") { p.delete("date_from"); p.delete("date_to"); }
+  $("stopsBox").hidden = false;
+  $("stopsTitle").textContent = `Остановки маршрута ${route}`;
+  try {
+    const r = await get("/api/forecast/stops?" + p);
+    $("stopsNote").textContent = r.note || (r.estimated ? "Оценка: разложение по остановкам приблизительное." : "");
+    $("stops").querySelector("tbody").innerHTML = r.stops.length ? r.stops.map(s => `
+      <tr class="${s.is_hub ? "hub" : ""}"><td>${s.sequence}</td><td>${s.name}${s.is_hub ? " ⇄" : ""}</td>
+      <td>${s.direction}</td><td class="num">${fmt(s.value)}</td><td class="num">${(s.share * 100).toFixed(1)}%</td></tr>`).join("")
+      : `<tr><td colspan="5" class="muted">Координат остановок нет. Итог по маршруту: ${fmt(r.total)}</td></tr>`;
+  } catch (e) { $("stopsNote").textContent = e.message; }
+}
+
+// ---------------------------------------------------------------- график
+async function loadChart(seq) {
+  const k = filterQuery({ withK: true });
+  const base = filterQuery({ withK: false });
+  let labels, datasets, scen, baseResp;
+  if (state.horizon === "year") {
+    // Прогноз — только ноябрь и декабрь: год склеивается из истории и прогноза.
+    k.delete("date_from"); k.delete("date_to"); base.delete("date_from"); base.delete("date_to");
+    const hist = new URLSearchParams(base); hist.set("horizon", "year"); hist.set("source", "history");
+    k.set("horizon", "year"); k.set("source", "forecast"); base.set("horizon", "year"); base.set("source", "forecast");
+    const [h, f, b] = await Promise.all([get("/api/forecast?" + hist), get("/api/forecast?" + k), get("/api/forecast?" + base)]);
+    if (stale(seq)) return;
+    labels =[...h.points.map(x => x.label), ...f.points.map(x => x.label)];
+    datasets = [
+      { label: "факт", data: [...h.points.map(x => x.value), ...f.points.map(() => null)], backgroundColor: "#8c959f" },
+      { label: "прогноз", data: [...h.points.map(() => null), ...f.points.map(x => x.value)], backgroundColor: "#0969da" },
+    ];
+    scen = f; baseResp = b;
+  } else {
+    k.set("horizon", state.horizon); base.set("horizon", state.horizon);
+    const [s, b] = await Promise.all([get("/api/forecast?" + k), get("/api/forecast?" + base)]);
+    if (stale(seq)) return;
+    labels =s.points.map(x => x.label);
+    datasets = [{ label: "прогноз", data: s.points.map(x => x.value), borderColor: "#0969da", backgroundColor: "#0969da33", fill: true, tension: 0.2 }];
+    if (Object.keys(kParams()).length) datasets.push({ label: "база", data: b.points.map(x => x.value), borderColor: "#8c959f", borderDash: [4, 4], fill: false });
+    scen = s; baseResp = b;
+  }
+  $("chartErr").textContent = "";
+  $("chartNote").textContent = state.horizon === "year"
+    ? "Слева от ноября — факт (история), справа — прогноз. Граница: 1 ноября 2025." : "";
+  const type = state.horizon === "year" ? "bar" : "line";
+  if (chart) chart.destroy();
+  chart = new Chart($("chart"), { type, data: { labels, datasets },
+    options: { animation: false, responsive: true, plugins: { legend: { display: datasets.length > 1 } },
+      scales: { y: { beginAtZero: true } } } });
+
+  // База / сценарий / разница
+  const b = baseResp.summary.total, s = scen.summary.total;
+  $("vBase").textContent = fmt(b); $("vScen").textContent = fmt(s);
+  const d = b ? (s - b) / b * 100 : 0;
+  $("vDiff").innerHTML = `<span class="${d > 0 ? "pos" : d < 0 ? "neg" : ""}">${d > 0 ? "+" : ""}${d.toFixed(1)}%</span>`;
+  $("adjList").innerHTML = (scen.adjustments || []).map(a => `<li>${a.label}</li>`).join("");
+
+  // События сети: значения уже пересчитаны бекендом, здесь только плашка.
+  $("netWarn").innerHTML = (scen.network_events || []).map(e => {
+    const kind = e.type === "FULL_CLOSURE" ? "временно не работает"
+      : e.type === "SHORTENING" ? `укорочен (×${e.factor})` : `поправка ×${e.factor}`;
+    const until = e.valid_to ? `по ${e.valid_to}` : "до отмены";
+    const src = e.source_url ? ` · <a href="${e.source_url}" target="_blank" rel="noopener">источник</a>` : "";
+    return `<div class="warn">⚠ Маршрут ${e.route} ${kind}: ${e.title} · с ${e.valid_from} ${until}${src}</div>`;
+  }).join("") + (scen.secondary_effects || []).map(x =>
+    `<div class="warn">↪ ${x.label || ("Маршрут " + x.target_route + " ×" + x.factor)}${x.caveat ? " — " + x.caveat : ""}</div>`).join("")
+    + (scen.warnings || []).map(w => `<div class="warn">${w}</div>`).join("");
+
+  renderRecs(scen);
+}
+
+// ---------------------------------------------------------------- рекомендации
+function renderRecs(resp) {
+  const pk = resp.summary && resp.summary.peak;
+  const items = [];
+  if (pk && pk.value > 0) {
+    // summary.peak — самая нагруженная пара «маршрут × час» в срезе, не точка суммарного графика.
+    items.push(`Маршрут ${pk.route}, ${pk.date}, ${String(pk.hour).padStart(2, "0")}:00 — самый нагруженный час выбранного среза, прогноз ${fmt(pk.value)} посадок. Рассмотрите дополнительный выпуск на этот час.`);
+  }
+  get("/api/forecast/routes?" + (() => { const p = filterQuery({ withK: true }); p.delete("routes"); p.delete("hour_from"); p.delete("hour_to"); if (state.horizon === "year") { p.delete("date_from"); p.delete("date_to"); } return p; })())
+    .then(r => {
+      const sorted = [...r.routes].filter(x => x.peak && x.total > 0).sort((a, b) => b.total - a.total).slice(0, 2);
+      for (const x of sorted) items.push(`Маршрут ${x.route}: ${(x.share * 100).toFixed(1)}% объёма периода, пик ${x.peak.date} в ${String(x.peak.hour).padStart(2, "0")}:00 — ${fmt(x.peak.value)} посадок. Проверьте, хватает ли подвижного состава в этот час; при нехватке — перераспределение с менее загруженных маршрутов.`);
+      $("recs").innerHTML = items.map(t => `<li>${t}</li>`).join("") || "<li class='muted'>Нет данных для рекомендаций.</li>";
+    }).catch(() => { $("recs").innerHTML = items.map(t => `<li>${t}</li>`).join(""); });
+}
+
+// ---------------------------------------------------------------- выгрузка
+function updateExport() {
+  const p = filterQuery({ withK: true });
+  if (state.horizon === "year") { p.delete("date_from"); p.delete("date_to"); }
+  const q = p.toString();
+  $("xlsx").href = `${API}/api/export?format=xlsx&${q}`;
+  $("csv").href = `${API}/api/export?format=csv&${q}`;
+}
+
+// ---------------------------------------------------------------- связка
+// Номер запроса: ответ, пришедший после более нового запроса, отбрасывается.
+// Debounce не отменяет уже летящие запросы — без этого медленный ответ
+// для «Дня» мог перерисовать график после быстрого ответа для «Года».
+state.seq = 0;
+const stale = seq => seq !== state.seq;
+
+let timer;
+function refresh() {
+  clearTimeout(timer);
+  timer = setTimeout(async () => {
+    const seq = ++state.seq;
+    updateExport();
+    try { await Promise.all([loadChart(seq), loadRouteTotals(seq)]); if (!stale(seq)) $("kErr").textContent = ""; }
+    catch (e) { if (!stale(seq)) $("chartErr").textContent = e.message; }
+  }, 200);
+}
+
+async function loadPresets() {
+  try {
+    const f = await get("/api/factors");
+    const w = (f.sources || []).find(s => s.id === "weather");
+    const opts = w && w.what_if_options && w.what_if_options.warm;
+    if (!opts) return;
+    const names = { RAIN_LIGHT: "лёгкий дождь", RAIN: "дождь", RAIN_HEAVY: "сильный дождь", SNOW: "снег", HEAT: "жара" };
+    $("weatherPresets").innerHTML = "<span class='muted'>Измеренные погодные коэффициенты тёплого сезона (апрель–сентябрь; в ноябре–декабре эффект не значим):</span> " +
+      Object.entries(opts).map(([k, v]) => `<button type="button" data-v="${v}">${names[k] || k} ×${v}</button>`).join(" ") +
+      ` <button type="button" data-v="1">сброс</button>`;
+    $("weatherPresets").querySelectorAll("button").forEach(b => b.addEventListener("click", () => { $("k_weather").value = b.dataset.v; refresh(); }));
+  } catch (e) {}
+}
+
+document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
+  state.horizon = b.dataset.h;
+  if (state.meta) setDefaultDates();
+  refresh();
+}));
+["dateFrom", "dateTo", "hourFrom", "hourTo", "k_global", "k_weather", "k_event", "weather_from", "weather_to", "event_from", "event_to", "k_routes"]
+  .forEach(id => $(id).addEventListener("input", refresh));
+
+(async () => {
+  await loadStatus();
+  try { await loadRoutes(); } catch (e) { $("chartErr").textContent = e.message; }
+  try { await initMap(); } catch (e) { $("mapNote").textContent = "Карта: " + e.message; }
+  loadPresets();
+  refresh();
+  setInterval(loadStatus, 30000);
+})();
+</script>
+</body>
+</html>

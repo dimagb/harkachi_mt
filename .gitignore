@@ -238,7 +238,20 @@ initial_data/
 # добавленное на демо, у жюри обнулило бы маршрут.
 service/data/network_events.json
 service/data/network_events.json.tmp
-service/static/
+# Состояние приёма валидаций (агрегаты и batch_id) — тоже состояние демо.
+service/data/validations_state.json
+service/data/validations_state.json.tmp
+# Локальный запуск без Docker: RUNTIME_DIR по умолчанию = data/
+service/data/reload.marker
+service/data/*.lock
+service/data/*.tmp
+# Статика фронтенда не коммитится, но каталог должен существовать:
+# Dockerfile копирует его в образ (COPY static/ ./static/).
+service/static/*
+!service/static/.gitkeep
 report.txt
 .venv/
+# Окружение сборки релиза: должно игнорироваться, иначе
+# build_release --require-clean посчитает дерево грязным.
+.venv-ml/
 node_modules/

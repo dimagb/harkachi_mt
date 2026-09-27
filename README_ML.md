@@ -9,15 +9,35 @@
 - Внешние источники, ссылки и измеренные эффекты: [artifacts/external_sources.md](artifacts/external_sources.md)
 
 ## Быстрый старт
+Основной вариант с проверкой результата — в корневом `README.md`, раздел «Быстрый старт».
+Коротко (отдельное окружение, данные уже в репозитории — `service/data/labels/`):
 ```bash
 pip install -r requirements-ml.txt
-# данные хакатона: dataset/labels/labels_day_train.csv, dataset/labels/labels_day_test.csv (в git не хранятся)
-python -m ml.build_release --require-clean --output release/forecast_release.duckdb --submission release/submission.csv
-python -m pytest tests -q
+python -m ml.build_release --require-clean --data service/data --output release/forecast_release.duckdb --submission release/submission.csv
+TRAM_DATASET=service/data python -m pytest tests -q
 ```
+Без `--data service/data` сборка ищет каталог `dataset/`, которого в репозитории нет.
 
 Релиз `hackathon-v7` (`statistical-v6`): cutoff 2025-10-31, прогноз 2025-11-01 … 2025-12-31,
 маршрут 5 = 0, score 0.88987.
+
+Два числа, оба верны:
+- **0.88987** — сданный релиз: его собирает этот код, его отдаёт сервис;
+- **0.89447** — лучший результат команды на лидерборде (в зачёт идёт лучший за всё время):
+  тот же подход, но маршрут 5 построен cold start от аналога с даты запуска 16.12.2025.
+  Механизм описан (`src/models/cold_start.py`), в сданный релиз не взят — решение команды
+  «маршрут 5 = 0». Оба выше 0.88.
+
+Данные хакатона для сборки лежат и в `service/data/labels/` — это та же пара файлов,
+её можно передать через `--data service/data`. Внешние источники при этом берутся
+из `data/external/` репозитория (в `service/data/` каталога `external` нет).
+
+Проверено: `--require-clean --data service/data` из коммита `3d48343` на pandas 3.0.6 /
+numpy 2.5.3 / duckdb 1.5.5 даёт прогноз с md5 `96b297e84e18ae66410fc6831aaa2f6b` —
+ровно тот, что получил 0.88987; `score` в `release_metadata` заполнен. То же повторено
+на свежем `git clone` без каталога с сырыми данными (коммит `69a5979`): md5 совпал.
+`requirements-ml.txt` задаёт только нижние границы версий — при расхождении md5
+`score` останется `NULL`, это и есть проверка.
 
 ## Структура
 | Папка | Что внутри |

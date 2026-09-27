@@ -10,15 +10,27 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Данные подключаются снаружи: прогноз, история, справочники.
+      # Входные данные: прогноз, история, справочники. Только чтение.
       # Чтобы обновить прогноз, достаточно заменить submission.csv
       # и дёрнуть POST /api/reload — перезапуск не нужен.
-      # Не :ro — сервис пишет сюда network_events.json (события сети),
-      # чтобы добавленное закрытие пережило перезапуск. Прогноз и
-      # справочники сервис только читает.
-      - ./data:/data
+      - ./data:/data:ro
+      # Изменяемое состояние: события сети, агрегаты приёма, метка
+      # перезагрузки. Через эти файлы два воркера видят изменения друг
+      # друга, поэтому это именованный том на ФС Linux, а не папка хоста:
+      # на пробросе папки Windows атрибуты файлов кешируются, и соседний
+      # воркер увидел бы закрытие с опозданием. Переживает перезапуск;
+      # сбросить состояние демо — docker compose down -v.
+      - runtime:/runtime
+      # Конфигурация ML-релиза: release_id, model_version, score и md5
+      # прогноза — для /api/meta. Лежит вне контекста сборки образа.
+      - ../configs:/configs:ro
+      # Каталог what-if коэффициентов релиза — для POST /api/forecast/preview.
+      - ../release:/release:ro
     environment:
       DATA_DIR: /data
+      RUNTIME_DIR: /runtime
+      RELEASE_CONFIG: /configs/release.json
+      FACTOR_OPTIONS: /release/factor_options.json
       FORECAST_FILE: submission.csv
     restart: unless-stopped
     # Лимиты из НФТ. Задаются дважды намеренно: ключи cpus/mem_limit
@@ -28,6 +40,10 @@ services:
     # цифры, которых на 2 vCPU не будет.
     cpus: 2.0
     mem_limit: 2g
+    # Равен mem_limit — swap запрещён. Без этого Docker по умолчанию
+    # разрешает ещё столько же swap (MemorySwap = 4 GiB), и требование
+    # ТЗ «без swap» держалось бы на удаче, а не на настройке.
+    memswap_limit: 2g
     deploy:
       resources:
         limits:
@@ -40,3 +56,6 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+
+volumes:
+  runtime:

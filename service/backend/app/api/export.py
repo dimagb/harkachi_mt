@@ -6,12 +6,19 @@ import csv
 import io
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import adjustment_params, parse_date_param, parse_routes_param
+from app.api.deps import (
+    ApiError,
+    adjustment_params,
+    check_hours,
+    check_period,
+    parse_date_param,
+    parse_routes_param,
+)
 from app.pipeline.adjust import Adjustment
-from app.pipeline.aggregate import operational_value
+from app.pipeline.aggregate import iter_rows
 from app.pipeline.ingest import get_dataset
 from app.pipeline.network_events import get_repository as network_repository
 
@@ -21,21 +28,20 @@ HEADER = ["route", "date", "hour", "prediction"]
 
 
 def _collect(routes, date_from, date_to, hour_from, hour_to, adjustment,
-             network=None):
+             network=None, rounded=True):
     dataset = get_dataset()
-    wanted = set(routes) if routes else None
     rows = []
-    for (route, day, hour), value in dataset.forecast.items():
-        if wanted is not None and route not in wanted:
-            continue
-        if date_from and day < date_from:
-            continue
-        if date_to and day > date_to:
-            continue
-        if hour < hour_from or hour > hour_to:
-            continue
-        value = operational_value(route, day, hour, value, adjustment, network)
-        rows.append((route, day.isoformat(), hour, round(value)))
+    for row, value in iter_rows(
+        dataset.forecast_index,
+        routes=routes,
+        start=date_from,
+        end=date_to,
+        hour_from=hour_from,
+        hour_to=hour_to,
+        adjustment=adjustment,
+        network=network,
+    ):
+        rows.append((row[0], row[5], row[2], round(value) if rounded else value))
     rows.sort(key=lambda item: (item[0], item[1], item[2]))
     return rows
 
@@ -57,14 +63,19 @@ def export(
 ):
     fmt = format.lower().strip()
     if fmt not in ("csv", "xlsx"):
-        raise HTTPException(
-            status_code=400, detail="format принимает значения csv или xlsx"
-        )
+        raise ApiError(400, "INVALID_PARAMETER", "format принимает значения csv или xlsx")
+    check_hours(hour_from, hour_to)
+    start = parse_date_param(date_from, "date_from")
+    end = parse_date_param(date_to, "date_to")
+    route_list = parse_routes_param(routes)
+    # Период целиком вне прогноза — ошибка; частичный выход в CSV не
+    # сообщить, файл просто строится по пересечению.
+    check_period(get_dataset(), "forecast", start, end)
 
     rows = _collect(
-        parse_routes_param(routes),
-        parse_date_param(date_from, "date_from"),
-        parse_date_param(date_to, "date_to"),
+        route_list,
+        start,
+        end,
         hour_from,
         hour_to,
         adjustment,
@@ -89,9 +100,8 @@ def export(
     try:
         from openpyxl import Workbook
     except ImportError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Выгрузка в XLSX недоступна: не установлен openpyxl",
+        raise ApiError(
+            503, "EXPORT_UNAVAILABLE", "Выгрузка в XLSX недоступна: не установлен openpyxl"
         ) from exc
 
     workbook = Workbook()
@@ -123,8 +133,9 @@ def export_submission():
     """Полная сетка 10 маршрутов × 61 день × 24 часа без поправок.
 
     И без событий сети: это model_prediction в формате лидерборда.
+    Без округления: целые дали бы другой файл и другой скор, чем 0.88987.
     """
-    rows = _collect(None, None, None, 0, 23, None)
+    rows = _collect(None, None, None, 0, 23, None, rounded=False)
     buffer = io.StringIO()
     writer = csv.writer(buffer, delimiter=";", lineterminator="\n")
     writer.writerow(HEADER)
