@@ -1340,6 +1340,10 @@ function Workspace() {
     setSelectedRoute(r);
     setStopRoute(r);
   };
+  const selectMapRoute = (route) => {
+    setSelectedRoute(route);
+    setSelectedStopId("");
+  };
   useEffect(() => {
     if (filters.routes.length) setSelectedRoute(filters.routes[0]);
   }, [filters.routes.join(",")]);
@@ -1552,7 +1556,8 @@ function Workspace() {
                 selectedStop={asList(stops.data, "stops").find((stop) => stop.stop_id === selectedStopId)}
                 routeLoads={routeLoads}
                 routeLoadsLoading={hourlyLoadNeeded ? fullDayLoad.loading : forecast.loading}
-                onRoute={openRoute}
+                onRoute={selectMapRoute}
+                onStopSelect={setSelectedStopId}
                 demo={demo}
               />
               {geometry.error && (

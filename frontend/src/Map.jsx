@@ -22,12 +22,14 @@ export default function TramMap({
   routeLoadsLoading = false,
   loadBandFilter = "all",
   onRoute,
+  onStopSelect,
   demo,
   selectedRoutes = [],
 }) {
   const el = useRef(),
     map = useRef(),
     onClick = useRef(onRoute),
+    onStopClick = useRef(onStopSelect),
     [ready, setReady] = useState(false),
     [error, setError] = useState(""),
     [showRoutes, setShowRoutes] = useState(true),
@@ -38,6 +40,7 @@ export default function TramMap({
     [hoveredRoute, setHoveredRoute] = useState(null),
     [focusedRoute, setFocusedRoute] = useState(null);
   onClick.current = onRoute;
+  onStopClick.current = onStopSelect;
   useEffect(() => {
     if (loadBandFilter !== "all") setLoad(true);
   }, [loadBandFilter]);
@@ -102,10 +105,18 @@ export default function TramMap({
         ),
       );
       const selectRoute = (e) => {
+        const stopLayers = m.getLayoutProperty("tram-stops", "visibility") === "visible"
+          ? ["tram-stops", "selected-stop-marker"] : ["selected-stop-marker"];
+        if (m.queryRenderedFeatures(e.point, { layers: stopLayers }).length)
+          return;
         const route = String(e.features[0].properties.route);
         setFocusedRoute(route);
-        setShowStops(false);
+        setShowStops(true);
         onClick.current(route);
+      };
+      const selectStop = (e) => {
+        const stopId = e.features[0]?.properties?.stop_id;
+        if (stopId) onStopClick.current(stopId);
       };
       const hoverRoute = (e) => {
         m.getCanvas().style.cursor = "pointer";
@@ -119,6 +130,11 @@ export default function TramMap({
         "tram-route-badges", "tram-route-badge-text"]) {
         m.on("click", layer, selectRoute);
         m.on("mousemove", layer, hoverRoute);
+        m.on("mouseleave", layer, leaveRoute);
+      }
+      for (const layer of ["tram-stops", "selected-stop-marker"]) {
+        m.on("click", layer, selectStop);
+        m.on("mouseenter", layer, () => { m.getCanvas().style.cursor = "pointer"; });
         m.on("mouseleave", layer, leaveRoute);
       }
     } catch {
@@ -187,7 +203,8 @@ export default function TramMap({
     const sd = {
       type: "FeatureCollection",
       features: stops
-        .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon))
+        .filter((s) => (!focusedRoute || String(s.route) === focusedRoute) &&
+          Number.isFinite(s.lat) && Number.isFinite(s.lon))
         .map((s) => ({
           type: "Feature",
           geometry: { type: "Point", coordinates: [s.lon, s.lat] },
@@ -203,9 +220,9 @@ export default function TramMap({
         source: "stops",
         paint: {
           "circle-color": "#e5f8ff",
-          "circle-radius": ["case", ["==", ["get", "is_hub"], true], 5, 3],
+          "circle-radius": ["case", ["==", ["get", "is_hub"], true], 4, 3],
           "circle-stroke-color": "#37bba3",
-          "circle-stroke-width": 1.5,
+          "circle-stroke-width": 1,
         },
       });
     }
@@ -214,7 +231,7 @@ export default function TramMap({
       features: selectedStop && Number.isFinite(selectedStop.lat) && Number.isFinite(selectedStop.lon)
         ? [{ type: "Feature", geometry: { type: "Point",
           coordinates: [selectedStop.lon, selectedStop.lat] },
-          properties: { name: selectedStop.name } }] : [],
+          properties: { name: selectedStop.name, stop_id: selectedStop.stop_id } }] : [],
     };
     if (m.getSource("selected-stop")) m.getSource("selected-stop").setData(selectedStopData);
     else {
@@ -368,8 +385,8 @@ export default function TramMap({
           aria-label={`Выделить маршрут ${route}`}
           aria-pressed={focusedRoute === String(route)}
           onClick={() => {
-            setFocusedRoute((current) => current === String(route) ? null : String(route));
-            setShowStops(false);
+            setFocusedRoute(String(route));
+            setShowStops(true);
             onClick.current(String(route));
           }}
           onMouseEnter={() => setHoveredRoute(String(route))}
