@@ -16,18 +16,36 @@ effect_type:
 """
 import numpy as np
 import pandas as pd
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from src import config
 
-EVENTS = pd.read_csv(config.EXTERNAL / "network_events.csv",
-                     parse_dates=["published_at", "valid_from", "valid_to"])
+EVENTS = pd.read_csv(config.EXTERNAL / "network_events.csv")
+for _column in ["published_at", "valid_from", "valid_to"]:
+    EVENTS[_column] = pd.to_datetime(EVENTS[_column], format="mixed")
+_UNSET = object()
+_snapshot = ContextVar("network_information_cutoff", default=_UNSET)
+
+
+@contextmanager
+def information_set(cutoff):
+    """Use one publication cutoff in every model layer; None is explicitly ex-post."""
+    token = _snapshot.set(cutoff)
+    try:
+        yield
+    finally:
+        _snapshot.reset(token)
 
 
 def known(cutoff):
     """Events published on or before the cutoff date (all of them if cutoff is None)."""
-    if cutoff is None:
-        return EVENTS
-    return EVENTS[EVENTS.published_at <= pd.Timestamp(cutoff)]
+    selected = _snapshot.get()
+    if selected is not _UNSET:
+        cutoff = selected
+    visible = EVENTS if cutoff is None else EVENTS[EVENTS.published_at <= pd.Timestamp(cutoff)]
+    # Later announcements revise a stable event key without rewriting what was known earlier.
+    return visible.sort_values("published_at", kind="stable").drop_duplicates("key", keep="last")
 
 
 def _mask(df, e):

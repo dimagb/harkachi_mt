@@ -13,7 +13,7 @@ python -m ml.build_release --data /data --output /data/forecast_release.duckdb  
 Главные правила:
 - **Один релиз — один показываемый прогноз.** `release_metadata.score` относится ровно к значениям
   `forecast_points` (`NULL`, если они не оценивались); `code_git_sha` — коммит, который их воспроизводит.
-  Текущий релиз `hackathon-v7`: маршрут 5 = 0, score = 0.88987.
+  Текущий релиз `hackathon-v8`: Chronos 25% объёма / 25% профиля, prior маршрута 5 с даты запуска, score = 0.90268.
 - `model_prediction` — готовый базовый прогноз; backend не применяет повторно ничего из
   `release_metadata.model_prediction_includes` (включая финальную калибровку ×1.012).
 - Сценарий всегда считается заново от `model_prediction` (никакого `new_factor / applied_factor`):

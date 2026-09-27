@@ -1,6 +1,8 @@
-# Прогноз — байт в байт как собран: md5 в configs/release.json посчитан
-# для LF. Без этого git на Windows с core.autocrlf=true отдаёт CRLF,
-# и md5 файла перестаёт совпадать с прогнозом, получившим скор.
-release/submission.csv -text
-service/data/submission.csv -text
+# The scored submission is byte-exact on every checkout/platform.
+release/submission.csv text eol=lf
+service/data/submission.csv text eol=lf
+artifacts/chronos/*.csv text eol=lf
+artifacts/chronos/*.csv.gz binary
 release/*.duckdb binary
+release/archive/**/*.duckdb binary
+release/archive/**/submission.csv text eol=lf
