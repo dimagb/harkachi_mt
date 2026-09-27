@@ -464,6 +464,10 @@ function RoutePicker({ routes, selected, onChange }) {
   );
 }
 function DateFilter({ filters, setFilters, bounds = [] }) {
+  // min/max у input type="date" набор с клавиатуры не запрещают: значение
+  // вне bounds подтягивается к границе до того, как попадёт в запрос.
+  const clamp = (d) =>
+    bounds[0] && d < bounds[0] ? bounds[0] : bounds[1] && d > bounds[1] ? bounds[1] : d;
   return (
     <details className="date-picker">
       <summary>
@@ -485,16 +489,17 @@ function DateFilter({ filters, setFilters, bounds = [] }) {
             value={filters.date_from}
             min={bounds[0]}
             max={filters.horizon === "day" ? bounds[1] : filters.date_to}
-            onChange={(e) =>
-              e.target.value &&
+            onChange={(e) => {
+              if (!e.target.value) return;
+              const v = clamp(e.target.value);
               // На горизонте «день» период — одни сутки: конец следует за началом.
               setFilters((f) => ({
                 ...f,
-                date_from: e.target.value,
-                anchor: e.target.value,
-                ...(f.horizon === "day" ? { date_to: e.target.value } : {}),
-              }))
-            }
+                date_from: v,
+                anchor: v,
+                ...(f.horizon === "day" ? { date_to: v } : {}),
+              }));
+            }}
           />
         </label>
         {filters.horizon !== "day" && (
@@ -506,10 +511,11 @@ function DateFilter({ filters, setFilters, bounds = [] }) {
             min={filters.date_from}
             max={bounds[1]}
             value={filters.date_to}
-            onChange={(e) =>
-              e.target.value &&
-              setFilters((f) => ({ ...f, date_to: e.target.value }))
-            }
+            onChange={(e) => {
+              if (!e.target.value) return;
+              const v = clamp(e.target.value);
+              setFilters((f) => ({ ...f, date_to: v }));
+            }}
           />
         </label>
         )}
@@ -692,7 +698,7 @@ function HistoricalBars({ filters, cutoff, metaError }) {
 // по объёму, маршруты без пассажиров в периоде в рекомендации не попадают.
 const byTotal = (routes) => [...routes].sort((a, b) => (b.total || 0) - (a.total || 0));
 const ruDate = (d) => (d ? d.split("-").reverse().join(".") : "—");
-function Ranking({ resource, onRoute, horizon, period, forecastRange = [], allHours = true }) {
+function Ranking({ resource, onRoute, horizon, period, forecastRange = [], allHours = true, routesFiltered = false }) {
   return (
     <Panel
       title={`Рейтинг маршрутов по пассажиропотоку${horizon === "day" ? " (день)" : horizon === "year" ? " (год)" : ""}`}
@@ -711,6 +717,9 @@ function Ranking({ resource, onRoute, horizon, period, forecastRange = [], allHo
             ? ruDate(period.from)
             : `${ruDate(period.from)} — ${ruDate(period.to)}`}
           {allHours ? ", все часы суток" : " — за все часы суток, фильтр часов к рейтингу не применяется"}
+          {routesFiltered
+            ? "; по всем маршрутам сети — фильтр маршрутов к рейтингу не применяется"
+            : "; по всем маршрутам сети"}
         </p>
       ) : null}
       <ResourceError resource={resource} />
@@ -1582,6 +1591,7 @@ function Workspace() {
                 period={rankPeriod}
                 forecastRange={[forecastFrom, forecastTo]}
                 allHours={filters.hour_from === 0 && filters.hour_to === 23}
+                routesFiltered={filters.routes.length > 0}
               />
             </div>
           </div>
@@ -1638,7 +1648,9 @@ function Workspace() {
                 date={filters.date_from}
               />
               <Recommendations
-                ranking={rank}
+                ranking={filters.routes.length
+                  ? rank.filter((r) => filters.routes.includes(String(r.route)))
+                  : rank}
                 forecast={dispatchForecast}
                 onAction={setToast}
               />
