@@ -614,21 +614,7 @@ function DataStatus({ meta }) {
     </Panel>
   );
 }
-const SOURCE_STATUS = {
-  confirmed: ["в прогнозе", "cyan"],
-  measured_not_applied: ["измерен, не применён", "yellow-text"],
-  checked_no_effect: ["эффекта нет", ""],
-  stub: ["заготовка", ""],
-};
-function Factors({ resource, meta, onScope, horizon }) {
-  // /api/factors отдаёт источники в sources: название, статус и где применён.
-  // Процентов «эффекта» там нет — эффект описан текстом, он в подсказке.
-  const factors = asList(resource.data, "sources").map((s) => ({
-    name: s.title,
-    status: s.applied === "what_if" && s.status === "confirmed"
-      ? ["what-if", "cyan"] : SOURCE_STATUS[s.status] || [s.status, ""],
-    hint: [s.effect, s.url].filter(Boolean).join(" · "),
-  }));
+function Factors({ meta, horizon }) {
   const score = meta?.data?.score;
   return (
     <>
@@ -651,34 +637,15 @@ function Factors({ resource, meta, onScope, horizon }) {
         </div>
       </Panel>
       <Panel
-        title="Внешние факторы и их эффект"
+        title="Факторы прогноза"
         className="factors"
-        info="Влияние погоды, календаря и городских событий на ожидаемый пассажиропоток."
+        info="Что учитывается в базовом прогнозе и какие условия можно задать отдельно."
       >
-        <ResourceError resource={resource} />
         <div className="factor-list">
-        {(factors.length
-          ? factors
-          : [
-              { name: "Погода" },
-              { name: "Календарь / сезонность" },
-              { name: "Городские события" },
-            ]
-        ).map((f, i) => (
-          <div className="factor" key={f.name} title={f.hint || ""}>
-            <Icon
-              as={[CloudRain, CalendarDays, Star][i % 3]}
-              className={i === 1 ? "red-text" : i === 2 ? "yellow-text" : ""}
-            />
-            <span>{f.name}</span>
-            <b className={f.status?.[1] || ""}>{f.status?.[0] || "—"}</b>
-          </div>
-        ))}
+          <div className="factor"><Icon as={CalendarDays} /><span>Календарь и сезонность</span><b>учтены</b></div>
+          <div className="factor"><Icon as={Star} /><span>События сети</span><b>при наличии</b></div>
+          <div className="factor"><Icon as={CloudRain} /><span>Погодный сценарий</span><b>задаётся отдельно</b></div>
         </div>
-        <button className="manual-factors" onClick={onScope}>
-          <SlidersHorizontal size={19} />
-          Ручные коэффициенты <small>индивидуально</small>
-        </button>
       </Panel>
     </>
   );
@@ -982,40 +949,6 @@ function Modal({ title, onClose, children }) {
     </div>
   );
 }
-// /api/scope — область определения и адаптации модели. Рендерится по факту
-// ответа: тексты приходят с бекенда, отсутствующие поля пропускаются.
-function ScopeView({ scope }) {
-  if (typeof scope === "string") return <p className="scope-note">{scope}</p>;
-  const t = scope.target || {}, v = scope.valid_for || {};
-  const range = (r) => (Array.isArray(r) && r.length === 2 ? `${ruDate(r[0])} — ${ruDate(r[1])}` : null);
-  const valid = [
-    Array.isArray(v.routes) && v.routes.length ? `Маршруты: ${v.routes.join(", ")}` : null,
-    v.horizon_days != null ? `Горизонт: ${v.horizon_days} дн.` : null,
-    range(v.period) && `Период прогноза: ${range(v.period)}`,
-    range(v.training_period) && `Период обучения: ${range(v.training_period)}`,
-  ].filter(Boolean);
-  const list = (title, items) =>
-    Array.isArray(items) && items.length ? (
-      <section className="scope-section">
-        <h3>{title}</h3>
-        <ul>{items.map((item, i) => <li key={i}>{item}</li>)}</ul>
-      </section>
-    ) : null;
-  return (
-    <div className="scope-view">
-      {(t.definition || t.granularity || t.note) && (
-        <p className="scope-note">
-          {t.definition && <b>{t.definition}</b>}
-          {t.granularity && <>{t.definition ? " · " : ""}{t.granularity}.</>}
-          {t.note && <> {t.note}</>}
-        </p>
-      )}
-      {valid.length > 0 && <p className="scope-valid">{valid.join(" · ")}</p>}
-      {list("Ограничения", scope.limitations)}
-      {list("Перенос модели", scope.adaptation)}
-    </div>
-  );
-}
 function StopPanel({ route, params, onClose }) {
   const res = useResource("/forecast/stops", {
     ...params,
@@ -1242,7 +1175,6 @@ function Workspace() {
     }),
     [stopRoute, setStopRoute] = useState(null),
     [admin, setAdmin] = useState(false),
-    [scopeOpen, setScopeOpen] = useState(false),
     [toast, setToast] = useState(""),
     [revision, setRevision] = useState(0),
     [selectedRoute, setSelectedRoute] = useState("17"),
@@ -1267,7 +1199,6 @@ function Workspace() {
     meta = useResource("/meta", {}, revision),
     health = useResource("/health"),
     factors = useResource("/factors"),
-    scope = useResource("/scope"),
     forecastFrom = meta.data?.forecast_from || (demo ? "2025-11-01" : null),
     forecastTo = meta.data?.forecast_to || (demo ? "2025-12-31" : null),
     // /api/forecast/routes считает только прогноз: запрашиваем пересечение
@@ -1566,10 +1497,8 @@ function Workspace() {
               </Panel>
               <aside className="analytics-factors">
                 <Factors
-                  resource={factors}
                   meta={meta}
                   horizon={filters.horizon}
-                  onScope={() => setScopeOpen(true)}
                 />
               </aside>
             </div>
@@ -1732,15 +1661,6 @@ function Workspace() {
           onSaved={() => setRevision((v) => v + 1)}
         />
       )}{" "}
-      {scopeOpen && (
-        <Modal
-          title="Факторы и ограничения модели"
-          onClose={() => setScopeOpen(false)}
-        >
-          <ResourceError resource={scope} />
-          {scope.data && <ScopeView scope={scope.data} />}
-        </Modal>
-      )}
       {toast && (
         <div className="toast" role="status">
           <Info size={18} />
