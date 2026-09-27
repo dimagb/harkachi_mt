@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Layers, LocateFixed } from "lucide-react";
-import { LOAD_COLORS } from "./routeLoad";
+import { LOAD_COLORS, routeMatchesLoad } from "./routeLoad";
 
 const loadColor = [
   "match", ["get", "loadBand"],
@@ -17,6 +17,8 @@ export default function TramMap({
   geometry,
   stops = [],
   routeLoads = {},
+  routeLoadsLoading = false,
+  loadBandFilter = "all",
   onRoute,
   demo,
   selectedRoutes = [],
@@ -33,6 +35,11 @@ export default function TramMap({
     [hoveredRoute, setHoveredRoute] = useState(null),
     [focusedRoute, setFocusedRoute] = useState(null);
   onClick.current = onRoute;
+  useEffect(() => {
+    if (loadBandFilter !== "all") setLoad(true);
+  }, [loadBandFilter]);
+  const matchesRoute = (route) =>
+    routeMatchesLoad(route, selectedRoutes, loadBandFilter, routeLoads);
   useEffect(() => {
     let m;
     try {
@@ -111,7 +118,7 @@ export default function TramMap({
     const m = map.current;
     if (!ready || !m) return;
     const visibleRoutes = [...new Set((geometry?.features || [])
-      .filter((f) => !selectedRoutes.length || selectedRoutes.includes(String(f.properties?.route)))
+      .filter((f) => matchesRoute(f.properties?.route))
       .map((f) => Number(f.properties?.route)))]
       .filter(Number.isFinite).sort((a, b) => a - b);
     const data = {
@@ -119,8 +126,7 @@ export default function TramMap({
       // Пустой выбор — все маршруты. У маршрута две features (по одной на
       // направление), фильтр по properties.route оставляет обе.
       features: (geometry?.features || [])
-        .filter((f) => !selectedRoutes.length ||
-          selectedRoutes.includes(String(f.properties?.route)))
+        .filter((f) => matchesRoute(f.properties?.route))
         .map((f) => ({
         ...f,
         properties: {
@@ -248,7 +254,10 @@ export default function TramMap({
     );
     m.setPaintProperty("tram-glow", "line-color", load ? loadColor : "#0095ff");
     m.setPaintProperty("tram-focus", "line-color", load ? loadColor : "#0095ff");
-  }, [ready, geometry, stops, routeLoads, showRoutes, showStops, load, selectedRoutes.join(",")]);
+  }, [ready, geometry, stops, routeLoads, showRoutes, showStops, load, selectedRoutes.join(","), loadBandFilter]);
+  useEffect(() => {
+    if (focusedRoute && !matchesRoute(focusedRoute)) setFocusedRoute(null);
+  }, [focusedRoute, loadBandFilter, routeLoads, selectedRoutes.join(",")]);
   useEffect(() => {
     const m = map.current;
     if (!ready || !m?.getLayer("tram-focus")) return;
@@ -263,7 +272,7 @@ export default function TramMap({
   const routeNumbers = [...new Set((geometry?.features || [])
     .map((f) => Number(f.properties?.route)))]
     .filter(Number.isFinite).sort((a, b) => a - b)
-    .filter((route) => !selectedRoutes.length || selectedRoutes.includes(String(route)));
+    .filter(matchesRoute);
   return (
     <section className="map panel">
       <div ref={el} className="map-canvas" />
@@ -313,6 +322,11 @@ export default function TramMap({
           {route}
         </button>)}
       </div>}
+      {loadBandFilter !== "all" && !routeNumbers.length && geometry?.features?.length > 0 && (
+        <div className="map-notice">{routeLoadsLoading
+          ? "Расчёт загрузки маршрутов…"
+          : "Нет маршрутов с выбранным уровнем загрузки"}</div>
+      )}
       {layers && (
         <div className="map-layer-popover">
           OpenFreeMap · Москва

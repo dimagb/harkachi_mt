@@ -6,6 +6,11 @@ export const LOAD_COLORS = {
   unknown: "#8aa5b5",
 };
 
+export function routeMatchesLoad(route, selectedRoutes, bandFilter, routeLoads) {
+  return (!selectedRoutes.length || selectedRoutes.includes(String(route))) &&
+    (bandFilter === "all" || routeLoads[String(route)]?.band === bandFilter);
+}
+
 export function loadBand(ratio) {
   if (!Number.isFinite(ratio)) return "unknown";
   if (ratio < 0.25) return "low";

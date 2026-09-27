@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { routeLoadByHour } from "../src/routeLoad.js";
+import { routeLoadByHour, routeMatchesLoad } from "../src/routeLoad.js";
 
 const hourly = (route, values) => ({
   [route]: values.map((value, hour) => ({
@@ -26,4 +26,12 @@ test("a higher scenario forecast can move a route into a higher colour band", ()
 
 test("missing hourly profile is not shown as an empty route", () => {
   assert.equal(routeLoadByHour({ 11: [{ key: "2025-11", value: 1000 }] }, 6, 8)[11].band, "unknown");
+});
+
+test("load filter keeps only routes in the selected band and route selection", () => {
+  const loads = { 7: { band: "low" }, 11: { band: "busy" } };
+  assert.equal(routeMatchesLoad(7, [], "low", loads), true);
+  assert.equal(routeMatchesLoad(11, [], "low", loads), false);
+  assert.equal(routeMatchesLoad(7, ["11"], "low", loads), false);
+  assert.equal(routeMatchesLoad(11, [], "all", loads), true);
 });

@@ -1175,13 +1175,14 @@ function Workspace() {
     [statusFilter, setStatusFilter] = useState("all");
   const deferred = useDebounce(coeff),
     params = forecastParams(filters, {}, false),
+    hourlyLoadNeeded = params.granularity !== "hour" || filters.hour_from !== 0 || filters.hour_to !== 23,
     baseParams = forecastParams(filters, deferred, false),
     forecast = useResource("/forecast", params, revision),
     fullDayLoad = useResource(
       "/forecast",
       { ...params, hour_from: 0, hour_to: 23, granularity: "hour" },
       revision,
-      !analytics && (filters.hour_from !== 0 || filters.hour_to !== 23),
+      !analytics && hourlyLoadNeeded,
     ),
     routes = useResource("/routes"),
     geometry = useResource("/geometry"),
@@ -1262,8 +1263,7 @@ function Workspace() {
         (scenario.summary.total / base.summary.total - 1) * 100 : null } };
   })();
   const routeLoads = useMemo(() => {
-    const customHours = filters.hour_from !== 0 || filters.hour_to !== 23;
-    const profile = customHours ? fullDayLoad : forecast;
+    const profile = hourlyLoadNeeded ? fullDayLoad : forecast;
     const baseline = Number(preview.data?.base?.summary?.total);
     const scenario = Number(preview.data?.scenario?.summary?.total);
     const factor = baseline > 0 && Number.isFinite(scenario) ? scenario / baseline : 1;
@@ -1274,7 +1274,7 @@ function Workspace() {
       factor,
     );
   }, [fullDayLoad.data, fullDayLoad.loading, forecast.data, forecast.loading,
-    preview.data, filters.hour_from, filters.hour_to]);
+    preview.data, filters.hour_from, filters.hour_to, hourlyLoadNeeded]);
   useEffect(() => {
     const selector = "details.route-picker, details.date-picker, details.coefficient-dates";
     const closeAll = (except = null) => {
@@ -1443,21 +1443,21 @@ function Workspace() {
                   setFilters={setFilters}
                   bounds={[forecastFrom, forecastTo]}
                 />
-                <label>Статус</label>
+                <label>Загрузка маршрута</label>
                 <select
-                  aria-label="Статус"
+                  aria-label="Загрузка маршрута"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  <option value="all">Все статусы</option>
-                  <option value="FULL_CLOSURE">Закрытие движения</option>
-                  <option value="SHORTENING">Укорочение</option>
+                  <option value="all">Все уровни</option>
+                  <option value="low">Почти пусто</option>
+                  <option value="moderate">Небольшая загрузка</option>
+                  <option value="busy">Средняя загрузка</option>
+                  <option value="high">Высокая загрузка</option>
                 </select>
               </Panel>
               <Events
-                events={events.filter(
-                  (e) => statusFilter === "all" || e.type === statusFilter,
-                )}
+                events={events}
                 onRoute={openRoute}
               />
               <div className="sidebar-foot">
@@ -1545,8 +1545,10 @@ function Workspace() {
               <TramMap
                 geometry={geometry.data}
                 selectedRoutes={filters.routes}
+                loadBandFilter={statusFilter}
                 stops={asList(stops.data, "stops")}
                 routeLoads={routeLoads}
+                routeLoadsLoading={hourlyLoadNeeded ? fullDayLoad.loading : forecast.loading}
                 onRoute={openRoute}
                 demo={demo}
               />
