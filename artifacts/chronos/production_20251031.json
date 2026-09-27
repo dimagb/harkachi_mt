@@ -1,0 +1,25 @@
+{
+  "model": "amazon/chronos-2",
+  "revision": "29ec3766d36d6f73f0696f85560a422f50e8498c",
+  "mode": "production",
+  "cutoff": "2025-10-31",
+  "end": "2025-12-31",
+  "history_sha256": "315dcd2c164777145e4902baebb3173b9ab58cc3d41140d0a3bdd7fef9dbf3a2",
+  "sources_sha256": {
+    "data/external/network_events.csv": "34bc71134c938e904bccfb04b721126a88e3a967aae7f82f7fd5ce15aa265f61",
+    "data/external/production_calendar.csv": "3f1bc6d5e2b93124912ddcdc4110d4a232acdee80586cde09fd8a4e74946521d",
+    "data/external/school_holidays_moscow.csv": "3959505d9f6a3598cf65f56a86101811284ca1dd421df041abcbbe1169cb5fca",
+    "data/external/daylight_moscow_2025.csv": "f722b18cc944d496f100e76cdd654a8c6faed76d95b245dc331fd7c6e21d97d3",
+    "src/calendar_ru.py": "14edd776f290b377a72675e5fa7c08ca8d23b6623333e7136d065df3b0018c06",
+    "src/astro.py": "30215c9dcf0ac9bdfa077455ab3d75578a7f30a9bb1767e7fe95824d36f66e96",
+    "src/events.py": "2fddfabaa567a8327a96f20b8d295ea0c8ce458cdd9116d2396e5b8de33c9a74"
+  },
+  "components_sha256": "b22b7b443fe13fa5e755ce3813d4a3e758f189b5de9290f0640b538445d872e3",
+  "target_availability": "only organizer labels <= cutoff; no future transport targets",
+  "known_future": "calendar and astronomy; network announcements follow information mode",
+  "context_length": 512,
+  "daily_cross_learning": true,
+  "hourly_channels": 24,
+  "quantile": 0.5,
+  "training": "frozen pretrained zero-shot, no private-target fine tuning"
+}

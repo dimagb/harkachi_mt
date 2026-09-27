@@ -1378,6 +1378,9 @@ function Workspace() {
     series = filters.horizon === "year"
       ? withBridge(toMonths(rawSeries), history.points) : rawSeries,
     historyPoints = history.points,
+    heatmapByRoute = filters.horizon === "year"
+      ? mergeByRoute(history.byRoute, forecast.data?.by_route)
+      : forecast.data?.by_route || {},
     historyLabel = {
       day: `История: ${["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"][new Date(filters.date_from + "T00:00:00Z").getUTCDay()]}, среднее за 4 недели до ${cutoff || "среза"}`,
       month: `История: 31 день до ${cutoff || "среза"}`,
@@ -1570,17 +1573,10 @@ function Workspace() {
                 title={`Тепловая карта: маршрут × ${{ day: "час", month: "день месяца", year: "месяц" }[filters.horizon]}`}
                 className="heat-panel"
                 info="Каждая строка — маршрут, каждый столбец — временной интервал. Тёплые цвета обозначают больший пассажиропоток."
-                actions={<small>10 маршрутов</small>}
+                actions={<small>Маршрутов: {Math.min(10, Object.keys(heatmapByRoute).length)}</small>}
               >
                 <Heatmap
-                  byRoute={
-                    filters.horizon === "year"
-                      ? mergeByRoute(
-                          history.byRoute,
-                          forecast.data?.by_route,
-                        )
-                      : forecast.data?.by_route
-                  }
+                  byRoute={heatmapByRoute}
                   horizon={filters.horizon}
                 />
               </Panel>

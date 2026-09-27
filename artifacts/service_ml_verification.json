@@ -1,0 +1,18 @@
+{
+  "release_id": "hackathon-v8",
+  "score": 0.90268,
+  "forecast_md5": "a2a872c04316e64e41ad2ac7940cd45c",
+  "checks": [
+    "health/full forecast",
+    "metadata/score/hash/version",
+    "API export exact scored CSV",
+    "route5 launch note",
+    "external source route5 applied",
+    "scope consistent",
+    "route5 forecast day",
+    "route5 forecast month",
+    "route5 forecast year"
+  ],
+  "check_count": 9,
+  "method": "local ASGI TestClient, isolated empty runtime; no live deployment or load-test claim"
+}

@@ -50,10 +50,14 @@ NOT_INCLUDED = ["user weather what-if", "user demand-event what-if", "user manua
 def git_sha():
     """HEAD commit of the repository, with '-dirty' if tracked or untracked files differ from it."""
     import subprocess
-    run = lambda *a: subprocess.run(["git", *a], cwd=ROOT, capture_output=True, text=True)
+    run = lambda *a: subprocess.run(["git", *a], cwd=ROOT, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace")
     head = run("rev-parse", "HEAD")
     if head.returncode:
         return None, True
+    top = run("rev-parse", "--show-toplevel")
+    if top.returncode or Path(top.stdout.strip()).resolve() != ROOT.resolve():
+        return None, True  # a copied delivery tree must not claim its parent repository's commit
     dirty = bool(run("status", "--porcelain", "--untracked-files=normal").stdout.strip())
     return head.stdout.strip(), dirty
 
@@ -73,6 +77,8 @@ def parse_args():
     ap.add_argument("--require-clean", action="store_true",
                     help="refuse to build unless the git working tree is clean (so code_git_sha reproduces it)")
     ap.add_argument("--submission", help="also write the jury CSV (route;date;hour;prediction) here")
+    ap.add_argument("--recompute-foundation", action="store_true",
+                    help="rerun pinned Chronos inference instead of verified component snapshots")
     return ap.parse_args()
 
 
@@ -100,6 +106,7 @@ def read_runtime_aggregates(path):
 
 def check_completeness(points, routes, start, end, zero_routes):
     import pandas as pd
+    import numpy as np
     n_days = (pd.Timestamp(end) - pd.Timestamp(start)).days + 1
     expected = len(routes) * n_days * 24
     problems = []
@@ -107,8 +114,12 @@ def check_completeness(points, routes, start, end, zero_routes):
         problems.append(f"{len(points)} rows, expected {expected}")
     if points.duplicated(["route", "date", "hour"]).any():
         problems.append("duplicated keys")
-    if points.model_prediction.isna().any():
-        problems.append("NaN predictions")
+    if not np.isfinite(points.model_prediction).all():
+        problems.append("non-finite predictions")
+    grid = pd.MultiIndex.from_product([routes, pd.date_range(start,end), range(24)])
+    actual = pd.MultiIndex.from_frame(points[["route","date","hour"]])
+    if len(grid.difference(actual)) or len(actual.difference(grid)):
+        problems.append("missing or extra route/date/hour keys")
     if (points.model_prediction < 0).any():
         problems.append("negative predictions")
     if set(points.route) != set(routes):
@@ -146,8 +157,28 @@ def build_intervals(history, cutoff, points):
     from src.rolling import DEFAULT_ORIGINS, evaluate_origins
 
     train = history[history.date <= cutoff]
+    residuals_path = ROOT / "artifacts" / "chronos" / "rolling_predictions.csv.gz"
+    if residuals_path.exists() and cutoff == pd.Timestamp("2025-10-31"):
+        from src.models.chronos_ensemble import history_digest
+        evidence = json.loads((residuals_path.parent / "validation.json").read_text(encoding="utf-8"))
+        if history_digest(train, cutoff) == evidence["history_sha256"]:
+            if hashlib.sha256(residuals_path.read_bytes()).hexdigest() != evidence["residuals_sha256"]:
+                raise ValueError("hybrid residual evidence checksum mismatch")
+            residuals = pd.read_csv(residuals_path, parse_dates=["date", "origin"])
+            if (residuals.date > cutoff).any():
+                raise ValueError("interval evidence contains post-cutoff labels")
+            table = intervals.fit(residuals)
+            pts = points.assign(horizon=(points.date - cutoff).dt.days, prediction=points.model_prediction)
+            iv = intervals.apply(pts, table)
+            out = iv[["route", "date", "hour", "p10", "p90"]].copy()
+            # Intervals include the center forecast; these are empirical, not guaranteed coverage.
+            out["p10"] = out.p10.clip(upper=points.model_prediction.to_numpy())
+            out["p90"] = out.p90.clip(lower=points.model_prediction.to_numpy())
+            out[["p10", "p90"]] = out[["p10", "p90"]].round(3)
+            return out, float(intervals.coverage_leave_one_origin_out(residuals).coverage.mean())
     origins = [o for o in DEFAULT_ORIGINS if pd.Timestamp(o) < cutoff - pd.Timedelta(days=7)]
-    res = evaluate_origins(train, ForecastConfig.from_files(mode="production", calibration="none"), origins=origins)
+    # For new histories only a statistical uncertainty proxy is available until hybrid backtests rerun.
+    res = evaluate_origins(train, ForecastConfig.from_files(mode="production", calibration="none", ensemble={}), origins=origins)
     table = intervals.fit(res.predictions)
     pts = points.assign(horizon=(points.date - cutoff).dt.days, prediction=points.model_prediction)
     iv = intervals.apply(pts, table)
@@ -192,9 +223,7 @@ def write_duckdb(path, metadata, points, options, rules, intervals_table=None):
                         "FROM intervals_table")
     finally:
         con.close()
-    if path.exists():
-        path.unlink()
-    tmp.rename(path)  # atomic-ish replace: a failed build never leaves a half-written release
+    tmp.replace(path)  # replace only after the complete new database has been closed
 
 
 def main():
@@ -230,7 +259,7 @@ def main():
     else:
         end = start + pd.Timedelta(days=60)
 
-    cfg = ForecastConfig.from_files(mode=mode)
+    cfg = ForecastConfig.from_files(mode=mode, recompute_foundation=args.recompute_foundation)
     fc = forecast(history, cutoff, start, end, cfg)
     points = fc[["route", "date", "hour", "prediction"]].rename(columns={"prediction": "model_prediction"})
     points.loc[points.route.isin(zero_routes), "model_prediction"] = 0.0
@@ -250,6 +279,8 @@ def main():
     scale = cfg.leaderboard_scale if mode == "leaderboard" else 1.0
     calibration = f"x{scale} (final calibration, set on the test period)" if scale != 1.0 else "none"
     includes = list(MODEL_PREDICTION_INCLUDES)
+    if cfg.ensemble.get("enabled"):
+        includes.append("Chronos-2: 25% daily demand and 25% normalized hourly shares; route5 prior retained")
     if scale != 1.0:
         includes.append(f"final calibration x{scale}")
     launched = [r for r in fc[fc.prediction > 0].route.unique() if r not in zero_routes
@@ -269,11 +300,15 @@ def main():
         "not_included": json.dumps(NOT_INCLUDED, ensure_ascii=False), "n_points": n,
         "details": json.dumps({"forecast_md5": forecast_md5, "model_params": cfg.model_params,
                                "history": [str(history.date.min().date()), str(cutoff.date())],
+                               "ensemble": cfg.ensemble,
+                               "information_mode": "EX_POST announcements" if mode == "leaderboard" else "known by cutoff",
                                "runtime_aggregates_rows": 0 if extra is None else len(extra),
                                "transfer_experiment": "artifacts/transfer_experiment.md",
                                "forecast_intervals": None if intervals_table is None else {
                                    "table": "forecast_intervals", "nominal": "p10-p90 (80%)",
-                                   "coverage_leave_one_origin_out": round(coverage, 3)},
+                                   "coverage_leave_one_origin_out": round(coverage, 3),
+                                   "evidence": "hybrid rolling residuals" if cutoff == pd.Timestamp("2025-10-31") else "statistical proxy",
+                                   "route5": "no historical residuals; transferred interval, not validated"},
                                "secondary_impacts": "enabled" if len(rules) else "disabled (no measured effect)"},
                               ensure_ascii=False, default=str),
     }])

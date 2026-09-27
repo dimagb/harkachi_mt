@@ -1,0 +1,14 @@
+{
+  "release_id": "hackathon-v8",
+  "model_version": "decomposition-chronos2-v1",
+  "rows": 14640,
+  "md5": "a2a872c04316e64e41ad2ac7940cd45c",
+  "score": 0.90268,
+  "CSV_and_service_identical": true,
+  "route5_launch_boundary_valid": true,
+  "DuckDB_and_CSV_identical": true,
+  "no_night_folder": true,
+  "no_foundation_imports": true,
+  "delivery_tree_copy": true,
+  "clean_git_clone_claimed": false
+}

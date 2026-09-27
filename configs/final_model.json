@@ -1,5 +1,16 @@
 {
-  "model": "decomposition_v2",
+  "model": "decomposition_v2_chronos2",
+  "ensemble": {
+    "enabled": true,
+    "model_id": "amazon/chronos-2",
+    "revision": "29ec3766d36d6f73f0696f85560a422f50e8498c",
+    "daily_weight": 0.25,
+    "shape_weight": 0.25,
+    "context_length": 512,
+    "median_quantile": 0.5,
+    "snapshot_directory": "artifacts/chronos",
+    "note": "Frozen zero-shot daily demand and 24-channel hourly shares. Route 5 keeps its historical 0.7 x route25 cold-start prior. Frozen components are reusable only for identical history, sources and scored horizon."
+  },
   "params": {
     "use_events": true,
     "blend_recent": 0.1,

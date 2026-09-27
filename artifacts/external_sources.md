@@ -1,6 +1,18 @@
 # Внешние источники данных
 
-Релиз `hackathon-v7` (`statistical-v6`, score 0.88987). Для каждого источника: рабочая ссылка, способ
+## Обновление релиза 27.09.2026
+
+Текущий v8 получил **0.90268**. Восстановление 7/50 — с 15 ноября по
+[официальному объявлению](https://t.me/DtOperativno/23565), с датированной
+ревизией в network_events.csv. Cold start маршрута 5 теперь применяется.
+Новая модель — frozen [Chronos-2](https://huggingface.co/amazon/chronos-2),
+Apache-2.0; подробности README_ML.md. Исторические ablation ниже измеряют
+статистическую базу v7, их значения не объявляются заново измеренным вкладом в v8.
+Данные после среза допускаются только как явно EX_POST объявления; скрытые
+метки и наблюдённые вагоны не используются. Погода остаётся what-if.
+
+
+Историческая база v7 (`statistical-v6`, score 0.88987), текущий v8 — 0.90268. Для каждого источника: рабочая ссылка, способ
 получения, как используется и измеренный эффект. Эффекты воспроизводятся скриптами
 `scripts/ablation_external.py` (4 временных fold → `artifacts/ablation_external.csv`),
 `scripts/rolling_backtest.py` (rolling backtest → `artifacts/rolling/comparison.csv`) и
@@ -17,7 +29,7 @@
 | Погода | Open-Meteo ERA5 (осадки, снег, температура, почасово) | [Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api), `python scripts/fetch_weather.py` → `data/external/weather_moscow_2025_hourly.csv` | коэффициенты what-if по сезонам (`factor_options`) | тёплый сезон: дождь 0.946, сильный дождь 0.897, жара 0.964 (значимы); холодный: дождь ≈ 1.00 (не значим). В прогнозе: бэктест 0.8868 → 0.8862 | what-if (5 подтверждённых опций) |
 | События / ремонты | Ремонт путей в Протопоповском переулке: маршрут 50 по выходным не ходит, маршрут 7 укорочен, с 6.09 «до конца осени» | [Восточный округ, 12.09.2025](https://newsvostok.ru/dlya-tramvaev-7-i-50-izmeneniya-po-vyhodnym-budut-dejstvovat-do-kontsa-oseni/), [РИМЦ](https://rimc-rambam.ru/news/14880/) → `data/external/network_events.csv` (с `published_at`) | режим выходных маршрутов 7 / 50 в ноябре, возврат в декабре; очистка истории | действует только в горизонте прогноза, на истории не проверяется | **да** |
 | События / ремонты | Объединение маршрутов 50 и 13 на время ремонта (июль 2025) | [Юго-Восточный курьер](https://uv-kurier.ru/2025/07/08/u-tramvaya-37-konechnaya-budet-v-lefortove-a-marshruty-50-i-13-obedinyat/) | смешивающий фактор в эксперименте с перетеканием | исключает ложное правило 7 → 50 (+40%) | да (в анализе) |
-| События | Запуск маршрута 5 16.12.2025 | [МСК1](https://msk1.ru/text/transport/2025/12/16/76173070/), [Газета Метро](https://www.gazetametro.ru/articles/s-20-dekabrja-skorrektirujut-marshruty-nazemnogo-transporta-v-raznyh-chastjah-goroda-18-12-2025) | запись `new_route` в `network_events.csv` для cold start | — | нет: решение команды «маршрут 5 = 0» |
+| События | Запуск маршрута 5 16.12.2025 | [МСК1](https://msk1.ru/text/transport/2025/12/16/76173070/), [Газета Метро](https://www.gazetametro.ru/articles/s-20-dekabrja-skorrektirujut-marshruty-nazemnogo-transporta-v-raznyh-chastjah-goroda-18-12-2025) | запись `new_route` в `network_events.csv` для cold start | исторический +0.0046 | да в v8: prior 0.7 × маршрут 25 с даты запуска |
 | События | Закрытия метро в ноябре–декабре 2025 | [график Дептранса](https://transport.mos.ru/metro/repairs_closures_metro) | проверка близости закрытых станций к остановкам (координаты из справочника организаторов) | ни одна остановка не ближе 1 км → эффекта нет | нет |
 | События | Запуск трамвайного диаметра Т1 12.11.2025 | [Российская газета](https://rg.ru/2025/11/12/reg-cfo/bystree-metro.html) | проверка: объединены маршруты 13 и 39 | не наши маршруты | нет |
 | Трафик | TomTom Traffic Index; дни с пробками 9+ баллов | [TomTom Traffic Index](https://www.tomtom.com/traffic-index/), [Коммерсант](https://www.kommersant.ru/doc/8364073) | — | открытого дневного архива за 2025 год нет; годовой профиль по часам ничего не добавляет к истории посадок | нет |

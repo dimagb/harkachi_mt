@@ -1,0 +1,30 @@
+{
+  "source": "Scores supplied by user in conversation on 2026-09-27; not independently retrieved",
+  "mapping": "Assumed same order as three CSV links in assistant recommendation; user has not explicitly confirmed filename mapping",
+  "results": [
+    {
+      "file": "chronos_components25_restore1115_r5prior07_EXPOST.csv",
+      "md5": "a2a872c04316e64e41ad2ac7940cd45c",
+      "score": 0.90268
+    },
+    {
+      "file": "chronos_components25_STRICT.csv",
+      "md5": "1b5301750164383c3acf7d715881c90b",
+      "score": 0.89011
+    },
+    {
+      "file": "weekend_restore_1115_route5_prior07.csv",
+      "md5": "fac2451887a27aa528df09d03c7c0165",
+      "score": 0.90054
+    }
+  ],
+  "comparison_if_mapping_correct": {
+    "previous_best": 0.89447,
+    "new_best_gain": 0.00821,
+    "chronos_gain_over_same_event_scenario": 0.00214,
+    "event_scenario_gain_over_previous_best": 0.00607
+  },
+  "release_changed": false,
+  "github_used": false,
+  "used_for_new_parameter_tuning": false
+}
